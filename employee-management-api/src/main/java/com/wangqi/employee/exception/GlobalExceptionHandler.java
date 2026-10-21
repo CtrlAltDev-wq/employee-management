@@ -1,6 +1,7 @@
 package com.wangqi.employee.exception;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.AuthenticationException;
@@ -56,6 +57,36 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleDuplicateDepartment(DuplicateDepartmentException ex,
                                                                   HttpServletRequest request) {
         return build(HttpStatus.CONFLICT, ex.getMessage(), request);
+    }
+
+    /**
+     * Domain 409: the same Idempotency-Key arrived with a different payload.
+     */
+    @ExceptionHandler(IdempotencyKeyReuseException.class)
+    public ResponseEntity<ErrorResponse> handleIdempotencyKeyReuse(IdempotencyKeyReuseException ex,
+                                                                   HttpServletRequest request) {
+        return build(HttpStatus.CONFLICT, ex.getMessage(), request);
+    }
+
+    /**
+     * Database-level conflict, e.g. two concurrent requests using the same
+     * Idempotency-Key. Retrying the same request returns the stored result.
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex,
+                                                                      HttpServletRequest request) {
+        return build(HttpStatus.CONFLICT,
+                "The request conflicts with a concurrently created resource. Retry the same request.",
+                request);
+    }
+
+    /**
+     * Upstream 502: the third-party system failed after every retry.
+     */
+    @ExceptionHandler(ExternalSyncException.class)
+    public ResponseEntity<ErrorResponse> handleExternalSyncFailure(ExternalSyncException ex,
+                                                                   HttpServletRequest request) {
+        return build(HttpStatus.BAD_GATEWAY, ex.getMessage(), request);
     }
 
     /**

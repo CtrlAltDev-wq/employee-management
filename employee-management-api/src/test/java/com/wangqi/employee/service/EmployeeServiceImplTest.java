@@ -35,6 +35,9 @@ class EmployeeServiceImplTest {
     @Mock
     private DepartmentRepository departmentRepository;
 
+    @Mock
+    private IdempotencyService idempotencyService;
+
     @InjectMocks
     private EmployeeServiceImpl employeeService;
 

@@ -4,8 +4,9 @@ A minimal, production-minded REST API built with **Java 17** and **Spring Boot 3
 It is intentionally small in scope but demonstrates the engineering practices
 that matter in a real backend service: clean layering, **global exception
 handling**, **strict request validation**, correct **HTTP status codes**,
-**stateless JWT security**, **automated tests**, and a measured fix for the
-classic **JPA N+1 query problem**.
+**stateless JWT security**, **resilient third-party integration with retries and
+idempotency**, **automated tests**, and a measured fix for the classic **JPA N+1
+query problem**.
 
 > Author: **wangqi**
 
@@ -21,6 +22,7 @@ classic **JPA N+1 query problem**.
 | Database         | H2 (in-memory)                               |
 | Validation       | Jakarta Bean Validation (Hibernate Validator)|
 | Security         | Spring Security, JWT (JJWT 0.12), BCrypt     |
+| Integration      | Spring `RestClient` over JDK `HttpClient` with connect/read timeouts |
 | Boilerplate      | Lombok                                       |
 | Testing          | JUnit 5, Mockito, MockMvc, AssertJ           |
 | Build            | Maven                                        |
@@ -49,11 +51,20 @@ classic **JPA N+1 query problem**.
   validates it, and role-based rules return **`401` for missing credentials**
   and **`403` for insufficient roles** using the same JSON error contract as
   every other failure.
+- **Resilient Integrations** — outbound calls to a third-party HR system retry
+  with exponential backoff on timeouts and `5xx` responses, never on `4xx`, and
+  surface an exhausted retry budget as **`502 Bad Gateway`** instead of a raw
+  connector exception.
+- **Idempotent Writes** — `POST /api/employees` accepts an `Idempotency-Key`
+  header. A repeated key with the same payload replays the original response
+  (`Idempotent-Replay: true`) without creating a duplicate; the same key with a
+  different payload returns **`409 Conflict`**.
 
 > **What this project demonstrates:** I can diagnose an N+1 query problem at the
-> SQL level and prove the fix with query-count assertions, and I can add
-> stateless JWT authentication with correct `401`/`403` semantics to an existing
-> API without breaking its error contract.
+> SQL level and prove the fix with query-count assertions, add stateless JWT
+> authentication with correct `401`/`403` semantics, and make a third-party
+> integration safe to retry by combining bounded exponential backoff with
+> database-backed idempotency — without breaking the API's error contract.
 
 ---
 
@@ -137,13 +148,82 @@ Demo accounts (seeded at startup; disable with `app.demo-users.enabled=false`):
 
 ---
 
+## Integrations: Retries, Timeouts, and Idempotency
+
+`POST /api/employees/{id}/sync` pushes an employee to an external HR system
+(`app.external-hr.base-url`). Third-party systems fail in ways the caller cannot
+control, so the client is written to survive transient failures and to make
+retrying safe.
+
+### Retry policy
+
+| Upstream outcome                     | Behaviour                                              |
+| ------------------------------------ | ------------------------------------------------------ |
+| `4xx`                                | **Not retried** — the request itself is wrong; fail fast with `502` |
+| `5xx`                                | Retried with exponential backoff                        |
+| Connection refused / read timeout    | Retried with exponential backoff                        |
+| Retries exhausted                    | `502 Bad Gateway` with a single `ErrorResponse` body    |
+
+Each attempt is bounded by a connect and read timeout (2s by default), so a
+hanging upstream cannot pin a Tomcat worker indefinitely. Backoff starts at
+200 ms and doubles per attempt (`max-attempts: 3` by default), which keeps a
+recovering dependency from being hammered:
+
+```
+attempt 1 --fail--> wait 200ms
+attempt 2 --fail--> wait 400ms
+attempt 3 --fail--> 502 Bad Gateway
+```
+
+The loop is a few lines of plain Java on top of Spring's `RestClient` — no
+Spring Retry, no Resilience4j, no extra runtime dependency. The number of
+attempts actually made is returned to the caller:
+
+```json
+{ "employeeId": 1, "attempts": 2 }
+```
+
+### Idempotent writes
+
+A network retry can deliver the same `POST` twice. Without protection the second
+arrival creates a second employee. `POST /api/employees` therefore accepts an
+optional `Idempotency-Key` header:
+
+| Scenario                                         | Response                                              |
+| ------------------------------------------------ | ----------------------------------------------------- |
+| First request with a new key                     | `201 Created`, record stored                          |
+| Same key + identical payload                     | `201 Created`, **original body replayed**, `Idempotent-Replay: true` |
+| Same key + different payload                     | `409 Conflict`                                        |
+| No key                                           | Normal behaviour, nothing recorded                     |
+| Two concurrent requests with the same key        | One wins; the loser gets `409 Conflict` and may retry |
+
+How it works:
+
+- The key is the **primary key** of the `idempotency_records` table, so
+  uniqueness is enforced by the database, not by application-level locking.
+- A **SHA-256 fingerprint** of the canonical request JSON is stored next to the
+  key. Key reuse with a different payload is therefore detectable and rejected
+  instead of silently returning someone else's result.
+- The record is written **inside the same transaction** as the employee, so
+  there is no window in which an employee exists without its idempotency record
+  (or vice versa).
+- Replay is byte-for-byte identical to the original response, so clients can
+  safely retry timeouts and connection resets.
+
+Covered by `ExternalHrClientTest` (retry until success, `4xx` not retried, give
+up after the budget) and `IdempotencyIntegrationTest` (replay, `409` on payload
+mismatch, no duplicate rows).
+
+---
+
 ## API Endpoints
 
 | Method   | Path                  | Request Body                                             | Success             | Error                        |
 | -------- | --------------------- | -------------------------------------------------------- | ------------------- | ---------------------------- |
 | `POST`   | `/api/auth/login`     | JSON (`username`, `password`)                            | `200 OK`            | `400 Bad Request`, `401 Unauthorized` |
 | `GET`    | `/api/employees/{id}` | —                                                        | `200 OK`            | `401 Unauthorized`, `404 Not Found` |
-| `POST`   | `/api/employees`      | JSON (`firstName`, `lastName`, `email`, `jobTitle`, `salary`, optional `departmentId`) | `201 Created`  | `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, `404 Not Found`, `409 Conflict` |
+| `POST`   | `/api/employees`      | JSON (`firstName`, `lastName`, `email`, `jobTitle`, `salary`, optional `departmentId`); optional `Idempotency-Key` header | `201 Created`  | `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, `404 Not Found`, `409 Conflict` |
+| `POST`   | `/api/employees/{id}/sync` | — (pushes the employee to the external HR system)   | `200 OK`            | `401 Unauthorized`, `404 Not Found`, `502 Bad Gateway` |
 | `DELETE` | `/api/employees/{id}` | —                                                        | `204 No Content`    | `401 Unauthorized`, `403 Forbidden`, `404 Not Found` |
 | `POST`   | `/api/departments`    | JSON (`name`)                                            | `201 Created`       | `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, `409 Conflict` |
 | `GET`    | `/api/departments`    | —                                                        | `200 OK`            | `401 Unauthorized`           |
@@ -241,6 +321,11 @@ mvn spring-boot:run
 
 The API starts on `http://localhost:8080`.
 
+Retry and timeout behaviour is configurable in `application.yml`
+(`app.external-hr.max-attempts`, `initial-backoff`, `timeout`, `base-url`).
+`JWT_SECRET` and `EXTERNAL_HR_URL` can be overridden through environment
+variables.
+
 ### Run the tests
 
 ```bash
@@ -278,6 +363,18 @@ curl -X POST http://localhost:8080/api/employees \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"firstName":"","lastName":"","email":"not-an-email"}'
+
+# 7. Send the same create request twice with one Idempotency-Key -> 201 both times,
+#    the second carries "Idempotent-Replay: true" and no second employee is created
+curl -i -X POST http://localhost:8080/api/employees \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Idempotency-Key: 9b2f0c1e-4a7d-4f2a-9c31-8d5b6e0a1f22" \
+  -H "Content-Type: application/json" \
+  -d '{"firstName":"Qi","lastName":"Wang","email":"idem@example.com","jobTitle":"Backend Engineer","salary":5000}'
+
+# 8. Push the employee to the external HR system -> 502 after 3 attempts
+#    (the default base URL http://localhost:1 is intentionally unreachable)
+curl -i -X POST http://localhost:8080/api/employees/1/sync -H "Authorization: Bearer $TOKEN"
 ```
 
 Log in as `viewer` / `viewer123` and repeat step 3 to see the **403 Forbidden**
@@ -293,21 +390,30 @@ The in-memory H2 console is available at `http://localhost:8080/h2-console`
 ```
 src/main/java/com/wangqi/employee
 ├── EmployeeManagementApplication.java   # Spring Boot entry point
-├── config/DemoUserInitializer.java      # Seeds demo admin/viewer accounts
+├── config/
+│   ├── DemoUserInitializer.java         # Seeds demo admin/viewer accounts
+│   ├── ExternalHrProperties.java        # app.external-hr tuning knobs
+│   └── RestClientConfig.java            # RestClient with connect/read timeouts
 ├── controller/
 │   ├── AuthController.java              # Login endpoint
-│   ├── EmployeeController.java          # Employee REST layer
+│   ├── EmployeeController.java          # Employee REST layer + sync endpoint
 │   └── DepartmentController.java        # Department REST layer
+├── integration/
+│   ├── ExternalHrClient.java            # Bounded retries with backoff
+│   └── ExternalEmployeePayload.java     # Outbound DTO
 ├── service/                             # Service contracts
+│   ├── IdempotencyService.java          # Key lookup, SHA-256 fingerprint, replay
 │   └── impl/                            # Business logic
 ├── repository/
 │   ├── EmployeeRepository.java          # Spring Data JPA repository
 │   ├── DepartmentRepository.java        # Entity-graph fetch for N+1 fix
-│   └── UserAccountRepository.java       # Credentials lookup
+│   ├── UserAccountRepository.java       # Credentials lookup
+│   └── IdempotencyRecordRepository.java # Idempotency-Key storage
 ├── entity/
 │   ├── Employee.java                    # JPA entity (LAZY many-to-one)
 │   ├── Department.java                  # JPA entity (LAZY one-to-many)
 │   ├── UserAccount.java                 # BCrypt credentials + role
+│   ├── IdempotencyRecord.java           # Key (PK) + request hash + response
 │   └── Role.java                        # ROLE_USER / ROLE_ADMIN
 ├── security/
 │   ├── SecurityConfig.java              # Stateless filter chain + rules
@@ -328,6 +434,8 @@ src/test/java/com/wangqi/employee
 ├── repository/DepartmentQueryCountTest.java    # Asserts 4 statements vs 1
 ├── security/JwtServiceTest.java                # Signing, expiry, tampering
 ├── security/SecurityIntegrationTest.java       # Login, 401 vs 403, roles
+├── integration/ExternalHrClientTest.java       # Retry, no retry on 4xx, give up
+├── controller/IdempotencyIntegrationTest.java  # Replay, 409, no duplicates
 └── support/QueryCounter.java                   # Hibernate StatementInspector
 ```
 
@@ -343,3 +451,9 @@ src/test/java/com/wangqi/employee
   and the fix is locked in by an automated query-count test.
 - Security at the boundary: BCrypt storage, stateless JWT validation, explicit
   role rules, and consistent JSON `401`/`403` responses.
+- Integration resilience: timeouts on every attempt, bounded exponential
+  backoff, no retries for client errors, and `502` instead of a leaked connector
+  exception.
+- Correctness under retries: idempotency keys stored in the database, request
+  fingerprints to detect key reuse, and replay of the original response so a
+  duplicate `POST` cannot create a duplicate row.

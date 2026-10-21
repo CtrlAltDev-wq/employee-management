@@ -2,6 +2,7 @@ package com.wangqi.employee.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wangqi.employee.exception.EmployeeNotFoundException;
+import com.wangqi.employee.integration.ExternalHrClient;
 import com.wangqi.employee.service.EmployeeService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -38,6 +39,9 @@ class EmployeeControllerTest {
 
     @MockBean
     private EmployeeService employeeService;
+
+    @MockBean
+    private ExternalHrClient externalHrClient;
 
     @Test
     @DisplayName("POST /api/employees returns 400 when required fields are missing or invalid")

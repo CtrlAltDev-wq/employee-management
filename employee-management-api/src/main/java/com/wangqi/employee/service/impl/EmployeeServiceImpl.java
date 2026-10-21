@@ -1,18 +1,24 @@
 package com.wangqi.employee.service.impl;
 
+import com.wangqi.employee.dto.EmployeeCreationResult;
 import com.wangqi.employee.dto.EmployeeRequest;
 import com.wangqi.employee.dto.EmployeeResponse;
 import com.wangqi.employee.entity.Department;
 import com.wangqi.employee.entity.Employee;
+import com.wangqi.employee.entity.IdempotencyRecord;
 import com.wangqi.employee.exception.DepartmentNotFoundException;
 import com.wangqi.employee.exception.DuplicateEmailException;
 import com.wangqi.employee.exception.EmployeeNotFoundException;
+import com.wangqi.employee.exception.IdempotencyKeyReuseException;
 import com.wangqi.employee.repository.DepartmentRepository;
 import com.wangqi.employee.repository.EmployeeRepository;
 import com.wangqi.employee.service.EmployeeService;
+import com.wangqi.employee.service.IdempotencyService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Optional;
 
 /**
  * Default {@link EmployeeService} implementation.
@@ -25,6 +31,7 @@ public class EmployeeServiceImpl implements EmployeeService {
 
     private final EmployeeRepository employeeRepository;
     private final DepartmentRepository departmentRepository;
+    private final IdempotencyService idempotencyService;
 
     @Override
     @Transactional(readOnly = true)
@@ -36,7 +43,29 @@ public class EmployeeServiceImpl implements EmployeeService {
 
     @Override
     @Transactional
-    public EmployeeResponse createEmployee(EmployeeRequest request) {
+    public EmployeeCreationResult createEmployee(EmployeeRequest request, String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            return new EmployeeCreationResult(create(request), false);
+        }
+
+        String requestHash = idempotencyService.fingerprint(request);
+        Optional<IdempotencyRecord> existing = idempotencyService.find(idempotencyKey);
+
+        if (existing.isPresent()) {
+            IdempotencyRecord record = existing.get();
+            if (!record.getRequestHash().equals(requestHash)) {
+                throw new IdempotencyKeyReuseException(idempotencyKey);
+            }
+            return new EmployeeCreationResult(idempotencyService.readResponse(record), true);
+        }
+
+        EmployeeResponse created = create(request);
+        // Stored in the same transaction as the employee: either both persist or neither does.
+        idempotencyService.remember(idempotencyKey, requestHash, created);
+        return new EmployeeCreationResult(created, false);
+    }
+
+    private EmployeeResponse create(EmployeeRequest request) {
         if (employeeRepository.existsByEmail(request.email())) {
             throw new DuplicateEmailException(request.email());
         }

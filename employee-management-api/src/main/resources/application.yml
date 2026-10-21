@@ -33,3 +33,8 @@ app:
     expiration: PT1H
   demo-users:
     enabled: true
+  external-hr:
+    base-url: ${EXTERNAL_HR_URL:http://localhost:1}
+    max-attempts: 3
+    initial-backoff: 200ms
+    timeout: 2s
