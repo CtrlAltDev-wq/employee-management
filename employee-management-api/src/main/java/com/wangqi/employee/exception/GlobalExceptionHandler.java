@@ -3,6 +3,7 @@ package com.wangqi.employee.exception;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -55,6 +56,17 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleDuplicateDepartment(DuplicateDepartmentException ex,
                                                                   HttpServletRequest request) {
         return build(HttpStatus.CONFLICT, ex.getMessage(), request);
+    }
+
+    /**
+     * Authentication 401: wrong username or password on login.
+     * The message is intentionally generic so it does not reveal whether the
+     * username exists.
+     */
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<ErrorResponse> handleAuthenticationFailure(AuthenticationException ex,
+                                                                     HttpServletRequest request) {
+        return build(HttpStatus.UNAUTHORIZED, "Invalid username or password.", request);
     }
 
     /**

@@ -25,3 +25,11 @@ server:
   port: 8080
   error:
     include-message: always
+
+app:
+  jwt:
+    # HS256 signing key. Override with the JWT_SECRET environment variable in production.
+    secret: ${JWT_SECRET:wangqi-employee-api-dev-secret-key-change-me-in-production-0123456789}
+    expiration: PT1H
+  demo-users:
+    enabled: true
