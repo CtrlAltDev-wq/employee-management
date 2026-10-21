@@ -3,6 +3,7 @@ package com.wangqi.employee.service;
 import com.wangqi.employee.dto.EmployeeResponse;
 import com.wangqi.employee.entity.Employee;
 import com.wangqi.employee.exception.EmployeeNotFoundException;
+import com.wangqi.employee.repository.DepartmentRepository;
 import com.wangqi.employee.repository.EmployeeRepository;
 import com.wangqi.employee.service.impl.EmployeeServiceImpl;
 import org.junit.jupiter.api.DisplayName;
@@ -30,6 +31,9 @@ class EmployeeServiceImplTest {
 
     @Mock
     private EmployeeRepository employeeRepository;
+
+    @Mock
+    private DepartmentRepository departmentRepository;
 
     @InjectMocks
     private EmployeeServiceImpl employeeService;

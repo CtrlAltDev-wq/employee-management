@@ -2,9 +2,12 @@ package com.wangqi.employee.service.impl;
 
 import com.wangqi.employee.dto.EmployeeRequest;
 import com.wangqi.employee.dto.EmployeeResponse;
+import com.wangqi.employee.entity.Department;
 import com.wangqi.employee.entity.Employee;
+import com.wangqi.employee.exception.DepartmentNotFoundException;
 import com.wangqi.employee.exception.DuplicateEmailException;
 import com.wangqi.employee.exception.EmployeeNotFoundException;
+import com.wangqi.employee.repository.DepartmentRepository;
 import com.wangqi.employee.repository.EmployeeRepository;
 import com.wangqi.employee.service.EmployeeService;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class EmployeeServiceImpl implements EmployeeService {
 
     private final EmployeeRepository employeeRepository;
+    private final DepartmentRepository departmentRepository;
 
     @Override
     @Transactional(readOnly = true)
@@ -37,12 +41,19 @@ public class EmployeeServiceImpl implements EmployeeService {
             throw new DuplicateEmailException(request.email());
         }
 
+        Department department = null;
+        if (request.departmentId() != null) {
+            department = departmentRepository.findById(request.departmentId())
+                    .orElseThrow(() -> new DepartmentNotFoundException(request.departmentId()));
+        }
+
         Employee employee = Employee.builder()
                 .firstName(request.firstName())
                 .lastName(request.lastName())
                 .email(request.email())
                 .jobTitle(request.jobTitle())
                 .salary(request.salary())
+                .department(department)
                 .build();
 
         return EmployeeResponse.from(employeeRepository.save(employee));

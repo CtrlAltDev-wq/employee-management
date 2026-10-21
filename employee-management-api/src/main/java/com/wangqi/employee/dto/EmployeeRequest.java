@@ -4,6 +4,7 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
@@ -34,6 +35,9 @@ public record EmployeeRequest(
 
         @NotNull(message = "Salary is required")
         @Min(value = 0, message = "Salary must be greater than or equal to 0")
-        BigDecimal salary
+        BigDecimal salary,
+
+        @Positive(message = "Department id must be a positive number")
+        Long departmentId
 ) {
 }

@@ -40,6 +40,24 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Domain 404: the requested department does not exist.
+     */
+    @ExceptionHandler(DepartmentNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleDepartmentNotFound(DepartmentNotFoundException ex,
+                                                                 HttpServletRequest request) {
+        return build(HttpStatus.NOT_FOUND, ex.getMessage(), request);
+    }
+
+    /**
+     * Domain 409: a department with the same name already exists.
+     */
+    @ExceptionHandler(DuplicateDepartmentException.class)
+    public ResponseEntity<ErrorResponse> handleDuplicateDepartment(DuplicateDepartmentException ex,
+                                                                  HttpServletRequest request) {
+        return build(HttpStatus.CONFLICT, ex.getMessage(), request);
+    }
+
+    /**
      * Bean validation 400: {@code @Valid} failed on the request body.
      * Every offending field is reported back to the client.
      */
