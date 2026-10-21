@@ -1,6 +1,8 @@
 package com.wangqi.employee.service;
 
 import com.wangqi.employee.dto.EmployeeResponse;
+import com.wangqi.employee.dto.EmployeeSearchCriteria;
+import com.wangqi.employee.dto.PageResponse;
 import com.wangqi.employee.entity.Employee;
 import com.wangqi.employee.exception.EmployeeNotFoundException;
 import com.wangqi.employee.repository.DepartmentRepository;
@@ -12,12 +14,20 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -63,6 +73,34 @@ class EmployeeServiceImplTest {
         assertThat(response.email()).isEqualTo("wangqi@example.com");
         assertThat(response.salary()).isEqualByComparingTo("5000.00");
         verify(employeeRepository).findById(1L);
+    }
+
+    @Test
+    @DisplayName("searchEmployees returns the requested page mapped to response records")
+    void shouldReturnPagedEmployeesWhenSearching() {
+        Employee employee = Employee.builder()
+                .id(7L)
+                .firstName("Qi")
+                .lastName("Wang")
+                .email("qi.wang@example.com")
+                .jobTitle("Backend Engineer")
+                .salary(new BigDecimal("6500.00"))
+                .build();
+
+        Page<Employee> page = new PageImpl<>(List.of(employee), PageRequest.of(0, 1), 3);
+        when(employeeRepository.findAll(any(Specification.class), any(Pageable.class))).thenReturn(page);
+
+        PageResponse<EmployeeResponse> response = employeeService.searchEmployees(
+                new EmployeeSearchCriteria("Qi", null, null, null, null, null, null),
+                PageRequest.of(0, 1, Sort.by("salary").descending()));
+
+        assertThat(response.content()).singleElement()
+                .satisfies(item -> assertThat(item.email()).isEqualTo("qi.wang@example.com"));
+        assertThat(response.page()).isZero();
+        assertThat(response.size()).isEqualTo(1);
+        assertThat(response.totalElements()).isEqualTo(3);
+        assertThat(response.totalPages()).isEqualTo(3);
+        verify(employeeRepository).findAll(any(Specification.class), any(Pageable.class));
     }
 
     @Test

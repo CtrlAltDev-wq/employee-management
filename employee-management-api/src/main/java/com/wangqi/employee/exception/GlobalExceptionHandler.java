@@ -9,6 +9,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -98,6 +99,41 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleAuthenticationFailure(AuthenticationException ex,
                                                                      HttpServletRequest request) {
         return build(HttpStatus.UNAUTHORIZED, "Invalid username or password.", request);
+    }
+
+    /**
+     * Query parameter 400: the requested sort field or direction is not
+     * supported. Rejecting it early prevents an invalid property expression
+     * from reaching the persistence layer.
+     */
+    @ExceptionHandler(InvalidSortParameterException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidSortParameter(InvalidSortParameterException ex,
+                                                                    HttpServletRequest request) {
+        return build(HttpStatus.BAD_REQUEST, ex.getMessage(), request);
+    }
+
+    /**
+     * Query parameter 400: a constraint on a {@code @RequestParam} failed
+     * (for example {@code size} above the maximum page size).
+     */
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    public ResponseEntity<ErrorResponse> handleHandlerMethodValidation(HandlerMethodValidationException ex,
+                                                                       HttpServletRequest request) {
+        Map<String, String> fieldErrors = new LinkedHashMap<>();
+        ex.getAllValidationResults().forEach(result -> {
+            String parameter = result.getMethodParameter().getParameterName();
+            result.getResolvableErrors().forEach(error ->
+                    fieldErrors.putIfAbsent(parameter != null ? parameter : "parameter",
+                            error.getDefaultMessage()));
+        });
+
+        ErrorResponse body = ErrorResponse.of(
+                HttpStatus.BAD_REQUEST,
+                "Validation failed for one or more request parameters.",
+                request.getRequestURI(),
+                fieldErrors
+        );
+        return ResponseEntity.badRequest().body(body);
     }
 
     /**

@@ -3,6 +3,8 @@ package com.wangqi.employee.service.impl;
 import com.wangqi.employee.dto.EmployeeCreationResult;
 import com.wangqi.employee.dto.EmployeeRequest;
 import com.wangqi.employee.dto.EmployeeResponse;
+import com.wangqi.employee.dto.EmployeeSearchCriteria;
+import com.wangqi.employee.dto.PageResponse;
 import com.wangqi.employee.entity.Department;
 import com.wangqi.employee.entity.Employee;
 import com.wangqi.employee.entity.IdempotencyRecord;
@@ -12,9 +14,12 @@ import com.wangqi.employee.exception.EmployeeNotFoundException;
 import com.wangqi.employee.exception.IdempotencyKeyReuseException;
 import com.wangqi.employee.repository.DepartmentRepository;
 import com.wangqi.employee.repository.EmployeeRepository;
+import com.wangqi.employee.repository.EmployeeSpecifications;
 import com.wangqi.employee.service.EmployeeService;
 import com.wangqi.employee.service.IdempotencyService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,6 +44,13 @@ public class EmployeeServiceImpl implements EmployeeService {
         Employee employee = employeeRepository.findById(id)
                 .orElseThrow(() -> new EmployeeNotFoundException(id));
         return EmployeeResponse.from(employee);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse<EmployeeResponse> searchEmployees(EmployeeSearchCriteria criteria, Pageable pageable) {
+        Page<Employee> page = employeeRepository.findAll(EmployeeSpecifications.matching(criteria), pageable);
+        return PageResponse.of(page.map(EmployeeResponse::from));
     }
 
     @Override

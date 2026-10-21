@@ -5,8 +5,9 @@ It is intentionally small in scope but demonstrates the engineering practices
 that matter in a real backend service: clean layering, **global exception
 handling**, **strict request validation**, correct **HTTP status codes**,
 **stateless JWT security**, **resilient third-party integration with retries and
-idempotency**, **automated tests**, and a measured fix for the classic **JPA N+1
-query problem**.
+idempotency**, **paginated dynamic search**, **self-documenting OpenAPI**, 
+**automated tests**, and a measured fix for the classic **JPA N+1 query
+problem**.
 
 > Author: **wangqi**
 
@@ -23,6 +24,7 @@ query problem**.
 | Validation       | Jakarta Bean Validation (Hibernate Validator)|
 | Security         | Spring Security, JWT (JJWT 0.12), BCrypt     |
 | Integration      | Spring `RestClient` over JDK `HttpClient` with connect/read timeouts |
+| API Docs         | springdoc-openapi (Swagger UI)               |
 | Boilerplate      | Lombok                                       |
 | Testing          | JUnit 5, Mockito, MockMvc, AssertJ           |
 | Build            | Maven                                        |
@@ -59,12 +61,21 @@ query problem**.
   header. A repeated key with the same payload replays the original response
   (`Idempotent-Replay: true`) without creating a duplicate; the same key with a
   different payload returns **`409 Conflict`**.
+- **Paginated Dynamic Search** — `GET /api/employees` filters by name, email,
+  job title, department and salary range with JPA `Specification`, returns a
+  stable `PageResponse` envelope, caps the page size, and whitelists sortable
+  fields so bad input becomes a clean `400` instead of a persistence error.
+- **Self-Documenting API** — springdoc generates an OpenAPI 3 description, and
+  Swagger UI at `/swagger-ui.html` lets a client authenticate with the JWT and
+  exercise every endpoint without writing a single line of code.
 
 > **What this project demonstrates:** I can diagnose an N+1 query problem at the
 > SQL level and prove the fix with query-count assertions, add stateless JWT
-> authentication with correct `401`/`403` semantics, and make a third-party
+> authentication with correct `401`/`403` semantics, make a third-party
 > integration safe to retry by combining bounded exponential backoff with
-> database-backed idempotency — without breaking the API's error contract.
+> database-backed idempotency, and build a paginated dynamic search that pushes
+> filtering into SQL while keeping untrusted input out of the query — without
+> breaking the API's error contract.
 
 ---
 
@@ -99,6 +110,70 @@ List<Department> findAllWithEmployees();
 Both numbers are measured by `DepartmentQueryCountTest`, which registers a
 Hibernate `StatementInspector` and asserts the exact statement count. The test
 fails if someone removes the entity graph or reintroduces a lazy traversal.
+
+---
+
+## Search: Pagination, Dynamic Filters, and Safe Sorting
+
+```
+GET /api/employees?jobTitle=engineer&minSalary=5000&page=0&size=20&sort=salary,desc
+```
+
+| Parameter      | Default | Rules                                                       |
+| -------------- | ------- | ----------------------------------------------------------- |
+| `firstName`    | —       | case-insensitive contains                                   |
+| `lastName`     | —       | case-insensitive contains                                   |
+| `email`        | —       | case-insensitive contains                                   |
+| `jobTitle`     | —       | case-insensitive contains                                   |
+| `departmentId` | —       | exact match                                                 |
+| `minSalary`    | —       | inclusive lower bound                                       |
+| `maxSalary`    | —       | inclusive upper bound                                       |
+| `page`         | `0`     | zero-based; negative → `400`                                |
+| `size`         | `20`    | `1..100`; above the cap → `400`                             |
+| `sort`         | `id,asc`| `field` or `field,asc\|desc`, repeatable                    |
+
+```json
+{
+  "content": [
+    {
+      "id": 1,
+      "firstName": "Alice",
+      "lastName": "Chen",
+      "email": "alice@example.com",
+      "jobTitle": "Senior Backend Engineer",
+      "salary": 9000.00,
+      "createdAt": "2024-01-01T10:15:30Z"
+    }
+  ],
+  "page": 0,
+  "size": 20,
+  "totalElements": 1,
+  "totalPages": 1,
+  "first": true,
+  "last": true
+}
+```
+
+Implementation notes:
+
+- Filters are compiled into a single SQL statement with `Specification`
+  (`EmployeeSpecifications`). Nothing is loaded and filtered in memory, and an
+  absent filter contributes no predicate at all.
+- The response is a **stable `PageResponse` envelope**, not Spring's internal
+  `Page` serialisation, which changes shape between versions and is not a
+  contract you should hand to a client.
+- `size` is capped at 100; without a cap one request can ask the server to
+  materialise the whole table.
+- Sort fields come from a **whitelist** (`id`, `firstName`, `lastName`, `email`,
+  `jobTitle`, `salary`, `createdAt`). An unknown field or direction returns
+  `400` with the allowed values, so untrusted input never reaches a JPA
+  property path.
+- `sort=salary,desc` is read from the raw request parameters — Spring's
+  comma-aware converter would otherwise split it into two separate values.
+
+Covered by `EmployeeSearchIntegrationTest` (paging, sorting, combined filters,
+rejected sort field, rejected page size) and a Mockito unit test for the
+service mapping.
 
 ---
 
@@ -222,6 +297,7 @@ mismatch, no duplicate rows).
 | -------- | --------------------- | -------------------------------------------------------- | ------------------- | ---------------------------- |
 | `POST`   | `/api/auth/login`     | JSON (`username`, `password`)                            | `200 OK`            | `400 Bad Request`, `401 Unauthorized` |
 | `GET`    | `/api/employees/{id}` | —                                                        | `200 OK`            | `401 Unauthorized`, `404 Not Found` |
+| `GET`    | `/api/employees`      | query params (`firstName`, `lastName`, `email`, `jobTitle`, `departmentId`, `minSalary`, `maxSalary`, `page`, `size`, `sort`) | `200 OK` | `400 Bad Request`, `401 Unauthorized` |
 | `POST`   | `/api/employees`      | JSON (`firstName`, `lastName`, `email`, `jobTitle`, `salary`, optional `departmentId`); optional `Idempotency-Key` header | `201 Created`  | `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, `404 Not Found`, `409 Conflict` |
 | `POST`   | `/api/employees/{id}/sync` | — (pushes the employee to the external HR system)   | `200 OK`            | `401 Unauthorized`, `404 Not Found`, `502 Bad Gateway` |
 | `DELETE` | `/api/employees/{id}` | —                                                        | `204 No Content`    | `401 Unauthorized`, `403 Forbidden`, `404 Not Found` |
@@ -229,6 +305,11 @@ mismatch, no duplicate rows).
 | `GET`    | `/api/departments`    | —                                                        | `200 OK`            | `401 Unauthorized`           |
 
 All endpoints under `/api/**` except `/api/auth/**` require a Bearer token.
+
+Interactive documentation is served at `http://localhost:8080/swagger-ui.html`;
+the raw OpenAPI 3 document is at `/v3/api-docs`. Use the **Authorize** button
+with the token from `POST /api/auth/login` to call protected endpoints directly
+from the browser.
 
 ### Login — request and response
 
@@ -375,6 +456,13 @@ curl -i -X POST http://localhost:8080/api/employees \
 # 8. Push the employee to the external HR system -> 502 after 3 attempts
 #    (the default base URL http://localhost:1 is intentionally unreachable)
 curl -i -X POST http://localhost:8080/api/employees/1/sync -H "Authorization: Bearer $TOKEN"
+
+# 9. Paginated, filtered search -> 200 OK with a PageResponse envelope
+curl -s "http://localhost:8080/api/employees?jobTitle=engineer&minSalary=5000&page=0&size=10&sort=salary,desc" \
+  -H "Authorization: Bearer $TOKEN"
+
+# 10. Unsupported sort field -> 400 Bad Request, listing the allowed fields
+curl -s "http://localhost:8080/api/employees?sort=password,asc" -H "Authorization: Bearer $TOKEN"
 ```
 
 Log in as `viewer` / `viewer123` and repeat step 3 to see the **403 Forbidden**
@@ -393,10 +481,11 @@ src/main/java/com/wangqi/employee
 ├── config/
 │   ├── DemoUserInitializer.java         # Seeds demo admin/viewer accounts
 │   ├── ExternalHrProperties.java        # app.external-hr tuning knobs
-│   └── RestClientConfig.java            # RestClient with connect/read timeouts
+│   ├── RestClientConfig.java            # RestClient with connect/read timeouts
+│   └── OpenApiConfig.java               # OpenAPI metadata + bearer scheme
 ├── controller/
 │   ├── AuthController.java              # Login endpoint
-│   ├── EmployeeController.java          # Employee REST layer + sync endpoint
+│   ├── EmployeeController.java          # Employee REST layer: search, create, sync
 │   └── DepartmentController.java        # Department REST layer
 ├── integration/
 │   ├── ExternalHrClient.java            # Bounded retries with backoff
@@ -406,6 +495,7 @@ src/main/java/com/wangqi/employee
 │   └── impl/                            # Business logic
 ├── repository/
 │   ├── EmployeeRepository.java          # Spring Data JPA repository
+│   ├── EmployeeSpecifications.java      # Dynamic search predicates
 │   ├── DepartmentRepository.java        # Entity-graph fetch for N+1 fix
 │   ├── UserAccountRepository.java       # Credentials lookup
 │   └── IdempotencyRecordRepository.java # Idempotency-Key storage
@@ -436,6 +526,7 @@ src/test/java/com/wangqi/employee
 ├── security/SecurityIntegrationTest.java       # Login, 401 vs 403, roles
 ├── integration/ExternalHrClientTest.java       # Retry, no retry on 4xx, give up
 ├── controller/IdempotencyIntegrationTest.java  # Replay, 409, no duplicates
+├── controller/EmployeeSearchIntegrationTest.java # Paging, filters, sort, 400s
 └── support/QueryCounter.java                   # Hibernate StatementInspector
 ```
 
@@ -457,3 +548,8 @@ src/test/java/com/wangqi/employee
 - Correctness under retries: idempotency keys stored in the database, request
   fingerprints to detect key reuse, and replay of the original response so a
   duplicate `POST` cannot create a duplicate row.
+- Query discipline on the read path too: filtering and sorting are pushed into
+  SQL, the page size is capped, the sort surface is whitelisted, and the
+  response is a stable envelope rather than a framework-internal type.
+- A documented API: the OpenAPI document is generated from the running code, so
+  it cannot drift from the implementation the way a hand-written spec does.
