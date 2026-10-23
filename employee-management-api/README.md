@@ -6,8 +6,8 @@ that matter in a real backend service: clean layering, **global exception
 handling**, **strict request validation**, correct **HTTP status codes**,
 **stateless JWT security**, **resilient third-party integration with retries and
 idempotency**, **paginated dynamic search**, **a Redis read cache with explicit
-invalidation**, **self-documenting OpenAPI**,
-**correlation-id tracing and metrics**, **bounded async execution**, 
+invalidation**, **event-driven decoupling through RabbitMQ**, **self-documenting
+OpenAPI**, **correlation-id tracing and metrics**, **bounded async execution**, 
 **automated tests**, a **container image**, and a measured fix for the classic
 **JPA N+1 query problem**.
 
@@ -24,6 +24,7 @@ invalidation**, **self-documenting OpenAPI**,
 | Persistence      | Spring Data JPA / Hibernate 6.5                     |
 | Database         | H2 (in-memory)                                      |
 | Cache            | Redis 7 + Spring Cache (`@Cacheable`, `@CacheEvict`)|
+| Messaging        | RabbitMQ 3.13 + Spring AMQP, publisher confirms, dead-letter queue |
 | Validation       | Jakarta Bean Validation (Hibernate Validator)       |
 | Security         | Spring Security 6, JWT (JJWT 0.12), BCrypt          |
 | Integration      | Spring `RestClient` over JDK `HttpClient`, bounded retries with exponential backoff |
@@ -82,13 +83,19 @@ invalidation**, **self-documenting OpenAPI**,
 - **Observability** — every request gets a correlation id (`X-Request-Id`),
   propagated into the SLF4J MDC and into error payloads, and exposed through
   Actuator plus a Prometheus scrape endpoint.
+- **Event-Driven Decoupling** — a committed employee emits an
+  `employee.created` message to a RabbitMQ topic exchange; onboarding is started
+  by a consumer instead of the request thread. The publisher does not know who
+  listens, the consumer is **idempotent** (duplicate deliveries are proven not
+  to create a second task), and a rejected message lands on a **dead-letter
+  queue** rather than being redelivered forever.
 - **Bounded Async Execution** — new-employee notifications run on a dedicated
   pool with explicit core/max/queue limits, caller-runs rejection, and MDC
   propagation, so background work can neither starve requests nor lose its
   trace context.
 - **Containerised** — a multi-stage `Dockerfile` builds with the full JDK and
   ships a non-root JRE image with a health check; `docker compose up` starts the
-  whole service.
+  API, Redis and RabbitMQ together.
 
 > **What this project demonstrates:** I can find a performance problem at the
 > SQL level and prove the fix with query-count assertions, add stateless JWT
@@ -96,9 +103,10 @@ invalidation**, **self-documenting OpenAPI**,
 > integration safe to retry by combining bounded exponential backoff with
 > database-backed idempotency, push filtering into SQL behind a whitelisted sort
 > surface, take the database off the hot read path with a Redis cache whose
-> invalidation is asserted in tests, and still operate the result — correlation
-> ids, metrics, a bounded async pool, a health-checked container — without
-> breaking the API's error contract.
+> invalidation is asserted in tests, decouple the write path with an
+> event stream that other services can subscribe to, and still operate the
+> result — correlation ids, metrics, a bounded async pool, a health-checked
+> container — without breaking the API's error contract.
 
 | Claim | Evidence in this repository |
 | ----- | --------------------------- |
@@ -108,7 +116,9 @@ invalidation**, **self-documenting OpenAPI**,
 | Security distinguishes unauthenticated from unauthorised | `SecurityIntegrationTest` — `401` without a token, `403` for the wrong role |
 | Every failure is a structured contract | `EmployeeControllerTest` — field-level `400` bodies; correlation id asserted in `CorrelationIdFilterTest` |
 | Async work cannot starve or lose the trace | `AsyncConfigTest` — pool bounds plus MDC propagation |
-| All of the above is green | **48 tests**, `mvn test` |
+| A redelivered message cannot do the work twice | `OnboardingInitializerTest` — second delivery returns `false`, one row |
+| Broker topology is what the README says | `MessagingConfigTest` — durable topic exchange, DLQ wiring, JSON round trip |
+| All of the above is green | **56 tests**, `mvn test` |
 
 ---
 
@@ -287,6 +297,73 @@ server while still exercising the same `@Cacheable` / `@CacheEvict` annotations.
 
 ---
 
+## Messaging: Decoupling Employee Onboarding
+
+`POST /api/employees` commits the row, then emits an `employee.created` event.
+Onboarding is not started by the request thread — a consumer owns it, and any
+other service can subscribe to the same event without the API changing.
+
+```
+POST /api/employees
+        │  transaction commits
+        ▼
+@TransactionalEventListener(AFTER_COMMIT)      EmployeeEventRelay
+        │
+        ▼
+RabbitTemplate.convertAndSend("employee.events", "employee.created", json)
+        │
+        ▼
+topic exchange ──► employee.created.onboarding ──► EmployeeCreatedConsumer
+   (durable)              (durable)                      │
+                                                          ▼
+                                              OnboardingInitializer (idempotent)
+                                                          │
+                                      failure ──► employee.created.onboarding.dlq
+```
+
+| Element | Why it is shaped this way |
+| ------- | ------------------------- |
+| `AFTER_COMMIT` | A message must never announce an employee whose transaction rolled back. |
+| Topic exchange | Routing keys let new consumers (`employee.created.mail`, `.provisioning`) bind later without touching the publisher. |
+| Durable queue | The event survives a broker restart; an in-memory queue would silently drop it. |
+| Dead-letter queue | A message the consumer rejects is parked for inspection instead of being redelivered forever (`default-requeue-rejected: false`). |
+| Publisher confirms | The broker acknowledges receipt; a nack is logged rather than assumed successful. |
+| Idempotent consumer | Brokers deliver **at least once**. `OnboardingInitializer` checks `employee_id` before writing, and a unique constraint enforces it at the database level — the second delivery is a no-op, not a second onboarding task. |
+| Failure isolation | If publishing fails after the commit, the relay logs and returns: the employee exists, so a `500` would describe something the caller cannot fix. |
+
+**Deliberate trade-off (the honest limitation):** publishing happens after the
+commit but outside it, so a crash in that window loses the event. The production
+fix is a **transactional outbox** (write the event in the same transaction, relay
+it afterwards) or CDC. It is not implemented here because it adds a table and a
+poller without teaching anything new about the broker itself.
+
+**Verification without a broker** — the test suite runs with
+`app.messaging.enabled=false`, which swaps in `LocalEmployeeEventPublisher` and
+skips the listener container:
+
+| Test | What it proves |
+| ---- | -------------- |
+| `MessagingConfigTest` | durable topic exchange, routing key, DLQ arguments, JSON payload round trip |
+| `EmployeeEventRelayTest` | domain event is mapped to the flat message; a broker outage does not fail the request |
+| `OnboardingInitializerTest` | first delivery creates a task, redelivery is ignored, one row in the table |
+
+To watch it end to end, run `docker compose up` and inspect the queue counters
+in the management UI at `http://localhost:15672`; the application log shows
+`Published employee.created for employee 1` and then
+`Onboarding initialised for employee 1`.
+
+Configuration:
+
+| Property | Default | Environment variable |
+| -------- | ------- | -------------------- |
+| `spring.rabbitmq.host` | `127.0.0.1` | `RABBITMQ_HOST` |
+| `spring.rabbitmq.port` | `5672` | `RABBITMQ_PORT` |
+| `spring.rabbitmq.username` / `password` | `wangqi` / `wangqi` | `RABBITMQ_USERNAME` / `RABBITMQ_PASSWORD` |
+| `app.messaging.enabled` | `true` | `MESSAGING_ENABLED` |
+| `app.messaging.exchange` / `queue` | `employee.events` / `employee.created.onboarding` | — |
+
+---
+
 ## Security: Stateless JWT Authentication
 
 `POST /api/auth/login` exchanges credentials for a signed HS256 token. Every
@@ -435,7 +512,9 @@ policy or an authenticated scrape.
 ## Async: A Bounded Pool Instead of the Default
 
 Creating an employee publishes an `EmployeeCreatedEvent` inside the
-transaction. The listener is:
+transaction. Two listeners react to it: this one sends the welcome notification
+on the worker pool, and `EmployeeEventRelay` publishes the event to RabbitMQ
+(see the messaging section). The notification listener is:
 
 ```java
 @Async(AsyncConfig.NOTIFICATION_EXECUTOR)
@@ -443,7 +522,7 @@ transaction. The listener is:
 public void onEmployeeCreated(EmployeeCreatedEvent event) { ... }
 ```
 
-Two decisions matter here:
+Both listeners run after the commit, for the same reason.
 
 - **`AFTER_COMMIT`, not `@EventListener`.** A plain listener fires before the
   transaction commits, so a create that later rolls back would still send a
@@ -474,6 +553,7 @@ docker compose up --build
 # Swagger:  http://localhost:8080/swagger-ui.html
 # Health:   http://localhost:8080/actuator/health
 # Redis:    localhost:6379 (password from REDIS_PASSWORD, default `wangqi`)
+# RabbitMQ: amqp://localhost:5672, UI at http://localhost:15672 (wangqi/wangqi)
 ```
 
 - **Multi-stage build** — Maven + full JDK in the build stage, a JRE-only Alpine
@@ -483,10 +563,15 @@ docker compose up --build
 - **Health check** — the image and Compose both probe `/actuator/health`, so
   orchestration sees "starting" versus "healthy" instead of guessing.
 - **Configuration by environment** — `JWT_SECRET`, `EXTERNAL_HR_URL`,
-  `REDIS_HOST` and `REDIS_PASSWORD` are overridable without rebuilding the image.
+  `REDIS_HOST`, `REDIS_PASSWORD`, `RABBITMQ_HOST` and `RABBITMQ_PASSWORD` are
+  overridable without rebuilding the image.
 - **Redis service** — Compose starts Redis with a password and an AOF file, and
   the API waits for its health check before starting, so the first cached read
   cannot race the cache server.
+- **RabbitMQ service** — a management-enabled broker with a persistent volume and
+  a `rabbitmq-diagnostics ping` health check; the management UI is on
+  `http://localhost:15672` so the exchange, queue and DLQ can be inspected while
+  the API runs.
 
 ---
 
@@ -595,7 +680,10 @@ from the browser.
 - Redis 6+ running locally (the default password is `wangqi`; override with
   `REDIS_PASSWORD`). To skip Redis entirely, run with
   `CACHE_PROVIDER=simple` and the same in-memory cache the tests use.
-- Docker (optional, for the container workflow)
+- RabbitMQ 3.x running locally (username/password default to `wangqi`; override
+  with `RABBITMQ_USERNAME` / `RABBITMQ_PASSWORD`). To run without a broker, set
+  `MESSAGING_ENABLED=false` and the event stays in-process.
+- Docker (optional, for the container workflow; it starts both servers for you)
 
 ### Run the application
 
@@ -607,8 +695,9 @@ The API starts on `http://localhost:8080`.
 
 Retry and timeout behaviour is configurable in `application.yml`
 (`app.external-hr.max-attempts`, `initial-backoff`, `timeout`, `base-url`).
-`JWT_SECRET`, `EXTERNAL_HR_URL`, `REDIS_HOST`, `REDIS_PORT` and
-`REDIS_PASSWORD` can be overridden through environment variables.
+`JWT_SECRET`, `EXTERNAL_HR_URL`, `REDIS_HOST`, `REDIS_PORT`,
+`REDIS_PASSWORD`, `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USERNAME` and
+`RABBITMQ_PASSWORD` can be overridden through environment variables.
 
 Or run the packaged image:
 
@@ -681,6 +770,12 @@ curl -s "http://localhost:8080/actuator/metrics/cache.gets?tag=cache:employees&t
   -H "Authorization: Bearer $TOKEN"
 #    -> the key lives in Redis as readable JSON with a TTL
 redis-cli -a wangqi TTL employee-api:employees::1
+
+# 12. Create an employee and watch the event leave the API
+#     -> log: "Published employee.created for employee N to exchange 'employee.events'"
+#     -> log: "Onboarding initialised for employee N <...>"
+#     -> RabbitMQ UI (http://localhost:15672): messages delivered on
+#        employee.created.onboarding, no messages resting in the DLQ
 ```
 
 Log in as `viewer` / `viewer123` and repeat step 3 to see the **403 Forbidden**
@@ -700,6 +795,8 @@ src/main/java/com/wangqi/employee
 │   ├── AsyncConfig.java                 # Bounded notification pool + MDC decorator
 │   ├── CacheConfig.java                 # Redis cache manager, TTLs, JSON serializer
 │   ├── CacheProperties.java             # app.cache tuning knobs
+│   ├── MessagingProperties.java         # app.messaging topology + switch
+│   ├── RabbitMqConfig.java              # Exchange, queue, DLQ, JSON converter
 │   ├── DemoUserInitializer.java         # Seeds demo admin/viewer accounts
 │   ├── ExternalHrProperties.java        # app.external-hr tuning knobs
 │   ├── RestClientConfig.java            # RestClient with connect/read timeouts
@@ -716,6 +813,14 @@ src/main/java/com/wangqi/employee
 ├── event/
 │   ├── EmployeeCreatedEvent.java        # Domain event
 │   └── EmployeeCreatedListener.java     # @Async after-commit notification
+├── messaging/
+│   ├── EmployeeCreatedMessage.java      # Wire contract (flat DTO)
+│   ├── EmployeeEventPublisher.java      # Transport-agnostic publisher interface
+│   ├── AmqpEmployeeEventPublisher.java  # RabbitMQ publisher
+│   ├── LocalEmployeeEventPublisher.java # In-process fallback (messaging disabled)
+│   ├── EmployeeEventRelay.java          # AFTER_COMMIT -> broker
+│   ├── EmployeeCreatedConsumer.java     # @RabbitListener
+│   └── OnboardingInitializer.java       # Idempotent onboarding start
 ├── service/                             # Service contracts
 │   ├── IdempotencyService.java          # Key lookup, SHA-256 fingerprint, replay
 │   └── impl/                            # Business logic
@@ -724,11 +829,13 @@ src/main/java/com/wangqi/employee
 │   ├── EmployeeSpecifications.java      # Dynamic search predicates
 │   ├── DepartmentRepository.java        # Entity-graph fetch for N+1 fix
 │   ├── UserAccountRepository.java       # Credentials lookup
+│   ├── OnboardingTaskRepository.java    # Duplicate-delivery check
 │   └── IdempotencyRecordRepository.java # Idempotency-Key storage
 ├── entity/
 │   ├── Employee.java                    # JPA entity (LAZY many-to-one)
 │   ├── Department.java                  # JPA entity (LAZY one-to-many)
 │   ├── UserAccount.java                 # BCrypt credentials + role
+│   ├── OnboardingTask.java              # Unique per employee (idempotent consumer)
 │   ├── IdempotencyRecord.java           # Key (PK) + request hash + response
 │   └── Role.java                        # ROLE_USER / ROLE_ADMIN
 ├── security/
@@ -755,14 +862,17 @@ src/test/java/com/wangqi/employee
 ├── controller/EmployeeSearchIntegrationTest.java # Paging, filters, sort, 400s
 ├── config/AsyncConfigTest.java                 # Pool bounds + MDC propagation
 ├── config/CacheConfigTest.java                 # TTLs + JSON round-trip of cached DTOs
+├── config/MessagingConfigTest.java             # Topology, DLQ, JSON payload
+├── messaging/EmployeeEventRelayTest.java       # Event mapping, broker outage
+├── messaging/OnboardingInitializerTest.java    # Duplicate delivery is a no-op
 ├── observability/CorrelationIdFilterTest.java  # Generate, reuse, sanitise
 ├── support/QueryCounter.java                   # Hibernate StatementInspector
 └── service/CacheBehaviorIntegrationTest.java   # 1 statement then 0; eviction on writes
 
-src/test/resources/application.properties       # app.cache.provider=simple (no Redis needed)
+src/test/resources/application.properties       # cache/messaging switches (no servers needed)
 
 Dockerfile               # multi-stage build (JDK build -> JRE runtime)
-docker-compose.yml       # API + Redis, one-command local run with health checks
+docker-compose.yml       # API + Redis + RabbitMQ, one-command local run
 .dockerignore
 ```
 
@@ -791,6 +901,12 @@ docker-compose.yml       # API + Redis, one-command local run with health checks
   the database is skipped entirely on a hit (asserted as 0 SQL statements in a
   test), invalidations are mapped to every write that changes a cached view, and
   hit/miss counters are exposed so the cache can be tuned from data.
+- Architecture where it pays off: the write path is decoupled through a durable
+  topic exchange, the event is published only after the commit, consumers are
+  idempotent because delivery is at-least-once, failures park on a dead-letter
+  queue instead of looping, and a second service can subscribe without a code
+  change here. The remaining gap (an outbox between commit and publish) is
+  named rather than hidden.
 - A documented API: the OpenAPI document is generated from the running code, so
   it cannot drift from the implementation the way a hand-written spec does.
 - Operability: a correlation id that survives the async boundary, a health and

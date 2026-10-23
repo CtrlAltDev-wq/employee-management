@@ -29,6 +29,19 @@ spring:
       timeout: 2s
       connect-timeout: 2s
 
+  rabbitmq:
+    host: ${RABBITMQ_HOST:127.0.0.1}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:wangqi}
+    password: ${RABBITMQ_PASSWORD:wangqi}
+    connection-timeout: 3s
+    # The broker confirms it accepted the message; a nack is logged by the publisher.
+    publisher-confirm-type: correlated
+    listener:
+      simple:
+        # A failing message goes to the dead-letter queue instead of hot-looping.
+        default-requeue-rejected: false
+
 server:
   port: 8080
   error:
@@ -63,6 +76,14 @@ app:
     provider: ${CACHE_PROVIDER:redis}
     employee-ttl: 10m
     department-ttl: 5m
+  messaging:
+    # false keeps the relay in-process (no broker required) — the same switch
+    # the test suite uses.
+    enabled: ${MESSAGING_ENABLED:true}
+    exchange: employee.events
+    routing-key: employee.created
+    queue: employee.created.onboarding
+    dead-letter-queue: employee.created.onboarding.dlq
   jwt:
     # HS256 signing key. Override with the JWT_SECRET environment variable in production.
     secret: ${JWT_SECRET:wangqi-employee-api-dev-secret-key-change-me-in-production-0123456789}
