@@ -8,6 +8,7 @@ import com.wangqi.employee.dto.PageResponse;
 import com.wangqi.employee.entity.Department;
 import com.wangqi.employee.entity.Employee;
 import com.wangqi.employee.entity.IdempotencyRecord;
+import com.wangqi.employee.event.EmployeeCreatedEvent;
 import com.wangqi.employee.exception.DepartmentNotFoundException;
 import com.wangqi.employee.exception.DuplicateEmailException;
 import com.wangqi.employee.exception.EmployeeNotFoundException;
@@ -18,6 +19,7 @@ import com.wangqi.employee.repository.EmployeeSpecifications;
 import com.wangqi.employee.service.EmployeeService;
 import com.wangqi.employee.service.IdempotencyService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -37,6 +39,7 @@ public class EmployeeServiceImpl implements EmployeeService {
     private final EmployeeRepository employeeRepository;
     private final DepartmentRepository departmentRepository;
     private final IdempotencyService idempotencyService;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Override
     @Transactional(readOnly = true)
@@ -97,7 +100,11 @@ public class EmployeeServiceImpl implements EmployeeService {
                 .department(department)
                 .build();
 
-        return EmployeeResponse.from(employeeRepository.save(employee));
+        Employee saved = employeeRepository.save(employee);
+        // Picked up after commit by the async notification listener.
+        eventPublisher.publishEvent(new EmployeeCreatedEvent(
+                saved.getId(), saved.getFirstName() + " " + saved.getLastName(), saved.getEmail()));
+        return EmployeeResponse.from(saved);
     }
 
     @Override

@@ -26,6 +26,28 @@ server:
   error:
     include-message: always
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{requestId:-no-request-id}] %logger{36} - %msg%n"
+
+info:
+  app:
+    name: employee-management-api
+    author: wangqi
+    description: Java 17 / Spring Boot 3 reference API
+
 app:
   jwt:
     # HS256 signing key. Override with the JWT_SECRET environment variable in production.

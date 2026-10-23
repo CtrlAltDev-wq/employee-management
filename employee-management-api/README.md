@@ -5,9 +5,10 @@ It is intentionally small in scope but demonstrates the engineering practices
 that matter in a real backend service: clean layering, **global exception
 handling**, **strict request validation**, correct **HTTP status codes**,
 **stateless JWT security**, **resilient third-party integration with retries and
-idempotency**, **paginated dynamic search**, **self-documenting OpenAPI**, 
-**automated tests**, and a measured fix for the classic **JPA N+1 query
-problem**.
+idempotency**, **paginated dynamic search**, **self-documenting OpenAPI**,
+**correlation-id tracing and metrics**, **bounded async execution**, 
+**automated tests**, a **container image**, and a measured fix for the classic
+**JPA N+1 query problem**.
 
 > Author: **wangqi**
 
@@ -25,6 +26,9 @@ problem**.
 | Security         | Spring Security, JWT (JJWT 0.12), BCrypt     |
 | Integration      | Spring `RestClient` over JDK `HttpClient` with connect/read timeouts |
 | API Docs         | springdoc-openapi (Swagger UI)               |
+| Observability    | Spring Boot Actuator, Micrometer, Prometheus |
+| Async            | Spring `@Async` with a bounded thread pool   |
+| Packaging        | Docker (multi-stage build), Docker Compose   |
 | Boilerplate      | Lombok                                       |
 | Testing          | JUnit 5, Mockito, MockMvc, AssertJ           |
 | Build            | Maven                                        |
@@ -68,14 +72,25 @@ problem**.
 - **Self-Documenting API** — springdoc generates an OpenAPI 3 description, and
   Swagger UI at `/swagger-ui.html` lets a client authenticate with the JWT and
   exercise every endpoint without writing a single line of code.
+- **Observability** — every request gets a correlation id (`X-Request-Id`),
+  propagated into the SLF4J MDC and into error payloads, and exposed through
+  Actuator plus a Prometheus scrape endpoint.
+- **Bounded Async Execution** — new-employee notifications run on a dedicated
+  pool with explicit core/max/queue limits, caller-runs rejection, and MDC
+  propagation, so background work can neither starve requests nor lose its
+  trace context.
+- **Containerised** — a multi-stage `Dockerfile` builds with the full JDK and
+  ships a non-root JRE image with a health check; `docker compose up` starts the
+  whole service.
 
 > **What this project demonstrates:** I can diagnose an N+1 query problem at the
 > SQL level and prove the fix with query-count assertions, add stateless JWT
 > authentication with correct `401`/`403` semantics, make a third-party
 > integration safe to retry by combining bounded exponential backoff with
-> database-backed idempotency, and build a paginated dynamic search that pushes
-> filtering into SQL while keeping untrusted input out of the query — without
-> breaking the API's error contract.
+> database-backed idempotency, build a paginated dynamic search that pushes
+> filtering into SQL while keeping untrusted input out of the query, and operate
+> the result: correlation-id tracing, metrics, a bounded async pool, and a
+> container image — without breaking the API's error contract.
 
 ---
 
@@ -291,6 +306,91 @@ mismatch, no duplicate rows).
 
 ---
 
+## Observability: Correlation IDs, Health, and Metrics
+
+Every request carries a correlation id. If the caller supplies a safe
+`X-Request-Id` (1–64 characters of `A-Z a-z 0-9 . _ -`) it is reused, so an API
+gateway's logs line up with ours; otherwise a UUID is generated. The id is:
+
+- echoed back in the `X-Request-Id` response header,
+- placed in the SLF4J MDC as `requestId`, which the log pattern renders,
+- included as `requestId` in every `ErrorResponse`,
+- copied into async worker threads (see the next section),
+- removed in a `finally` block so a pooled thread never leaks another request's id.
+
+```
+2026-10-23 10:14:02.118 INFO  [7f3a9c1e-...] c.w.e.event.EmployeeCreatedListener - Welcome notification sent ...
+```
+
+| Endpoint                  | Purpose                                        |
+| ------------------------- | ---------------------------------------------- |
+| `/actuator/health`        | Liveness/readiness with component details      |
+| `/actuator/metrics`       | Micrometer metric names and values             |
+| `/actuator/metrics/http.server.requests` | Latency and counts per URI, method, status |
+| `/actuator/prometheus`    | Prometheus scrape format                      |
+| `/actuator/info`          | Build/app metadata                            |
+
+`http.server.requests` is collected automatically by Micrometer, so there is no
+hand-written timing code that can drift from reality. These endpoints are open
+in this demo for reviewers; in a real deployment they belong behind a network
+policy or an authenticated scrape.
+
+---
+
+## Async: A Bounded Pool Instead of the Default
+
+Creating an employee publishes an `EmployeeCreatedEvent` inside the
+transaction. The listener is:
+
+```java
+@Async(AsyncConfig.NOTIFICATION_EXECUTOR)
+@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+public void onEmployeeCreated(EmployeeCreatedEvent event) { ... }
+```
+
+Two decisions matter here:
+
+- **`AFTER_COMMIT`, not `@EventListener`.** A plain listener fires before the
+  transaction commits, so a create that later rolls back would still send a
+  welcome notification for an employee that never existed.
+- **A dedicated, bounded executor.** The default `@Async` executor is unbounded:
+  under load it silently grows a thread per task. The notification pool is
+  explicit:
+
+| Setting            | Value                    | Why                                             |
+| ------------------ | ------------------------ | ----------------------------------------------- |
+| core / max threads | 2 / 4                    | predictable memory and CPU                      |
+| queue capacity     | 50                       | bounded backlog                                 |
+| rejection policy   | `CallerRunsPolicy`       | backpressure instead of silently dropping work   |
+| task decorator     | copies the MDC map       | async logs keep the originating `requestId`     |
+| shutdown           | waits up to 10s          | in-flight notifications finish on deploy        |
+
+A slow notification path therefore cannot starve HTTP request threads or any
+other async work. `AsyncConfigTest` asserts the pool bounds and proves that the
+correlation id survives the thread hand-off.
+
+---
+
+## Docker: One Command
+
+```bash
+docker compose up --build
+# API:      http://localhost:8080
+# Swagger:  http://localhost:8080/swagger-ui.html
+# Health:   http://localhost:8080/actuator/health
+```
+
+- **Multi-stage build** — Maven + full JDK in the build stage, a JRE-only Alpine
+  runtime stage. Dependencies are cached in their own layer, so a source change
+  does not re-download them.
+- **Non-root** — the container runs as an unprivileged `app` user.
+- **Health check** — the image and Compose both probe `/actuator/health`, so
+  orchestration sees "starting" versus "healthy" instead of guessing.
+- **Configuration by environment** — `JWT_SECRET` and `EXTERNAL_HR_URL` are
+  overridable without rebuilding the image.
+
+---
+
 ## API Endpoints
 
 | Method   | Path                  | Request Body                                             | Success             | Error                        |
@@ -393,6 +493,7 @@ from the browser.
 
 - JDK 17 or newer
 - Maven 3.8+
+- Docker (optional, for the container workflow)
 
 ### Run the application
 
@@ -406,6 +507,12 @@ Retry and timeout behaviour is configurable in `application.yml`
 (`app.external-hr.max-attempts`, `initial-backoff`, `timeout`, `base-url`).
 `JWT_SECRET` and `EXTERNAL_HR_URL` can be overridden through environment
 variables.
+
+Or run the packaged image:
+
+```bash
+docker compose up --build
+```
 
 ### Run the tests
 
@@ -479,6 +586,7 @@ The in-memory H2 console is available at `http://localhost:8080/h2-console`
 src/main/java/com/wangqi/employee
 ├── EmployeeManagementApplication.java   # Spring Boot entry point
 ├── config/
+│   ├── AsyncConfig.java                 # Bounded notification pool + MDC decorator
 │   ├── DemoUserInitializer.java         # Seeds demo admin/viewer accounts
 │   ├── ExternalHrProperties.java        # app.external-hr tuning knobs
 │   ├── RestClientConfig.java            # RestClient with connect/read timeouts
@@ -490,6 +598,11 @@ src/main/java/com/wangqi/employee
 ├── integration/
 │   ├── ExternalHrClient.java            # Bounded retries with backoff
 │   └── ExternalEmployeePayload.java     # Outbound DTO
+├── observability/
+│   └── CorrelationIdFilter.java         # X-Request-Id -> MDC -> response header
+├── event/
+│   ├── EmployeeCreatedEvent.java        # Domain event
+│   └── EmployeeCreatedListener.java     # @Async after-commit notification
 ├── service/                             # Service contracts
 │   ├── IdempotencyService.java          # Key lookup, SHA-256 fingerprint, replay
 │   └── impl/                            # Business logic
@@ -527,7 +640,13 @@ src/test/java/com/wangqi/employee
 ├── integration/ExternalHrClientTest.java       # Retry, no retry on 4xx, give up
 ├── controller/IdempotencyIntegrationTest.java  # Replay, 409, no duplicates
 ├── controller/EmployeeSearchIntegrationTest.java # Paging, filters, sort, 400s
+├── config/AsyncConfigTest.java                 # Pool bounds + MDC propagation
+├── observability/CorrelationIdFilterTest.java  # Generate, reuse, sanitise
 └── support/QueryCounter.java                   # Hibernate StatementInspector
+
+Dockerfile               # multi-stage build (JDK build -> JRE runtime)
+docker-compose.yml       # one-command local run with health check
+.dockerignore
 ```
 
 ---
@@ -553,3 +672,6 @@ src/test/java/com/wangqi/employee
   response is a stable envelope rather than a framework-internal type.
 - A documented API: the OpenAPI document is generated from the running code, so
   it cannot drift from the implementation the way a hand-written spec does.
+- Operability: a correlation id that survives the async boundary, a health and
+  metrics surface an orchestrator can act on, an explicit thread-pool budget,
+  and an image that runs as a non-root user with a real health probe.

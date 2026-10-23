@@ -1,9 +1,12 @@
 package com.wangqi.employee.service;
 
+import com.wangqi.employee.dto.EmployeeCreationResult;
+import com.wangqi.employee.dto.EmployeeRequest;
 import com.wangqi.employee.dto.EmployeeResponse;
 import com.wangqi.employee.dto.EmployeeSearchCriteria;
 import com.wangqi.employee.dto.PageResponse;
 import com.wangqi.employee.entity.Employee;
+import com.wangqi.employee.event.EmployeeCreatedEvent;
 import com.wangqi.employee.exception.EmployeeNotFoundException;
 import com.wangqi.employee.repository.DepartmentRepository;
 import com.wangqi.employee.repository.EmployeeRepository;
@@ -14,6 +17,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -47,6 +51,9 @@ class EmployeeServiceImplTest {
 
     @Mock
     private IdempotencyService idempotencyService;
+
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
 
     @InjectMocks
     private EmployeeServiceImpl employeeService;
@@ -101,6 +108,26 @@ class EmployeeServiceImplTest {
         assertThat(response.totalElements()).isEqualTo(3);
         assertThat(response.totalPages()).isEqualTo(3);
         verify(employeeRepository).findAll(any(Specification.class), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("createEmployee publishes an EmployeeCreatedEvent for the saved employee")
+    void shouldPublishEventAfterCreatingEmployee() {
+        EmployeeRequest request = new EmployeeRequest(
+                "Qi", "Wang", "qi.wang@example.com", "Backend Engineer", new BigDecimal("5000.00"), null);
+
+        when(employeeRepository.existsByEmail("qi.wang@example.com")).thenReturn(false);
+        when(employeeRepository.save(any(Employee.class))).thenAnswer(invocation -> {
+            Employee employee = invocation.getArgument(0);
+            employee.setId(11L);
+            return employee;
+        });
+
+        EmployeeCreationResult result = employeeService.createEmployee(request, null);
+
+        assertThat(result.replayed()).isFalse();
+        assertThat(result.employee().id()).isEqualTo(11L);
+        verify(eventPublisher).publishEvent(any(EmployeeCreatedEvent.class));
     }
 
     @Test
