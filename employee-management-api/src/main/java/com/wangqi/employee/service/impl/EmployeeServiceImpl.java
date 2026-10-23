@@ -1,5 +1,6 @@
 package com.wangqi.employee.service.impl;
 
+import com.wangqi.employee.config.CacheConfig;
 import com.wangqi.employee.dto.EmployeeCreationResult;
 import com.wangqi.employee.dto.EmployeeRequest;
 import com.wangqi.employee.dto.EmployeeResponse;
@@ -19,6 +20,9 @@ import com.wangqi.employee.repository.EmployeeSpecifications;
 import com.wangqi.employee.service.EmployeeService;
 import com.wangqi.employee.service.IdempotencyService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -42,6 +46,7 @@ public class EmployeeServiceImpl implements EmployeeService {
     private final ApplicationEventPublisher eventPublisher;
 
     @Override
+    @Cacheable(cacheNames = CacheConfig.EMPLOYEES, key = "#id")
     @Transactional(readOnly = true)
     public EmployeeResponse getEmployeeById(Long id) {
         Employee employee = employeeRepository.findById(id)
@@ -57,6 +62,7 @@ public class EmployeeServiceImpl implements EmployeeService {
     }
 
     @Override
+    @CacheEvict(cacheNames = CacheConfig.DEPARTMENTS, allEntries = true)
     @Transactional
     public EmployeeCreationResult createEmployee(EmployeeRequest request, String idempotencyKey) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
@@ -108,6 +114,10 @@ public class EmployeeServiceImpl implements EmployeeService {
     }
 
     @Override
+    @Caching(evict = {
+            @CacheEvict(cacheNames = CacheConfig.EMPLOYEES, key = "#id"),
+            @CacheEvict(cacheNames = CacheConfig.DEPARTMENTS, allEntries = true)
+    })
     @Transactional
     public void deleteEmployee(Long id) {
         Employee employee = employeeRepository.findById(id)

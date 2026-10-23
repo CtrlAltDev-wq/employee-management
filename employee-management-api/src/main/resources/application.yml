@@ -21,6 +21,14 @@ spring:
       enabled: true
       path: /h2-console
 
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:wangqi}
+      timeout: 2s
+      connect-timeout: 2s
+
 server:
   port: 8080
   error:
@@ -49,6 +57,12 @@ info:
     description: Java 17 / Spring Boot 3 reference API
 
 app:
+  cache:
+    # "redis" in production/test environments with a server; "simple" makes
+    # integration tests run without Redis (in-memory ConcurrentMapCacheManager).
+    provider: ${CACHE_PROVIDER:redis}
+    employee-ttl: 10m
+    department-ttl: 5m
   jwt:
     # HS256 signing key. Override with the JWT_SECRET environment variable in production.
     secret: ${JWT_SECRET:wangqi-employee-api-dev-secret-key-change-me-in-production-0123456789}

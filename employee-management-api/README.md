@@ -5,7 +5,8 @@ It is intentionally small in scope but demonstrates the engineering practices
 that matter in a real backend service: clean layering, **global exception
 handling**, **strict request validation**, correct **HTTP status codes**,
 **stateless JWT security**, **resilient third-party integration with retries and
-idempotency**, **paginated dynamic search**, **self-documenting OpenAPI**,
+idempotency**, **paginated dynamic search**, **a Redis read cache with explicit
+invalidation**, **self-documenting OpenAPI**,
 **correlation-id tracing and metrics**, **bounded async execution**, 
 **automated tests**, a **container image**, and a measured fix for the classic
 **JPA N+1 query problem**.
@@ -16,22 +17,23 @@ idempotency**, **paginated dynamic search**, **self-documenting OpenAPI**,
 
 ## Tech Stack
 
-| Layer            | Technology                                   |
-| ---------------- | -------------------------------------------- |
-| Language         | Java 17                                      |
-| Framework        | Spring Boot 3, Spring Web (Spring MVC)       |
-| Persistence      | Spring Data JPA / Hibernate                  |
-| Database         | H2 (in-memory)                               |
-| Validation       | Jakarta Bean Validation (Hibernate Validator)|
-| Security         | Spring Security, JWT (JJWT 0.12), BCrypt     |
-| Integration      | Spring `RestClient` over JDK `HttpClient` with connect/read timeouts |
-| API Docs         | springdoc-openapi (Swagger UI)               |
-| Observability    | Spring Boot Actuator, Micrometer, Prometheus |
-| Async            | Spring `@Async` with a bounded thread pool   |
-| Packaging        | Docker (multi-stage build), Docker Compose   |
-| Boilerplate      | Lombok                                       |
-| Testing          | JUnit 5, Mockito, MockMvc, AssertJ           |
-| Build            | Maven                                        |
+| Layer            | Technology                                          |
+| ---------------- | --------------------------------------------------- |
+| Language         | Java 17                                             |
+| Framework        | Spring Boot 3.3.5, Spring Web (Spring MVC)          |
+| Persistence      | Spring Data JPA / Hibernate 6.5                     |
+| Database         | H2 (in-memory)                                      |
+| Cache            | Redis 7 + Spring Cache (`@Cacheable`, `@CacheEvict`)|
+| Validation       | Jakarta Bean Validation (Hibernate Validator)       |
+| Security         | Spring Security 6, JWT (JJWT 0.12), BCrypt          |
+| Integration      | Spring `RestClient` over JDK `HttpClient`, bounded retries with exponential backoff |
+| API Docs         | springdoc-openapi 2.6 (Swagger UI)                  |
+| Observability    | Spring Boot Actuator, Micrometer, Prometheus        |
+| Async            | Spring `@Async` with a bounded `ThreadPoolTaskExecutor` |
+| Packaging        | Docker (multi-stage build), Docker Compose          |
+| Boilerplate      | Lombok                                              |
+| Testing          | JUnit 5, Mockito, MockMvc, AssertJ                  |
+| Build            | Maven 3.9                                           |
 
 ---
 
@@ -69,6 +71,11 @@ idempotency**, **paginated dynamic search**, **self-documenting OpenAPI**,
   job title, department and salary range with JPA `Specification`, returns a
   stable `PageResponse` envelope, caps the page size, and whitelists sortable
   fields so bad input becomes a clean `400` instead of a persistence error.
+- **Redis Read Cache** — `GET /api/employees/{id}` and `GET /api/departments`
+  are served from Redis with per-cache TTLs (10m / 5m), namespaced keys and
+  human-readable JSON values, and every write that changes a cached view
+  evicts it. **Measured, not claimed**: a test asserts the second read sends
+  **zero** SQL statements, and hit/miss counters are exposed through Actuator.
 - **Self-Documenting API** — springdoc generates an OpenAPI 3 description, and
   Swagger UI at `/swagger-ui.html` lets a client authenticate with the JWT and
   exercise every endpoint without writing a single line of code.
@@ -83,14 +90,25 @@ idempotency**, **paginated dynamic search**, **self-documenting OpenAPI**,
   ships a non-root JRE image with a health check; `docker compose up` starts the
   whole service.
 
-> **What this project demonstrates:** I can diagnose an N+1 query problem at the
+> **What this project demonstrates:** I can find a performance problem at the
 > SQL level and prove the fix with query-count assertions, add stateless JWT
 > authentication with correct `401`/`403` semantics, make a third-party
 > integration safe to retry by combining bounded exponential backoff with
-> database-backed idempotency, build a paginated dynamic search that pushes
-> filtering into SQL while keeping untrusted input out of the query, and operate
-> the result: correlation-id tracing, metrics, a bounded async pool, and a
-> container image — without breaking the API's error contract.
+> database-backed idempotency, push filtering into SQL behind a whitelisted sort
+> surface, take the database off the hot read path with a Redis cache whose
+> invalidation is asserted in tests, and still operate the result — correlation
+> ids, metrics, a bounded async pool, a health-checked container — without
+> breaking the API's error contract.
+
+| Claim | Evidence in this repository |
+| ----- | --------------------------- |
+| The N+1 query is really gone | `DepartmentQueryCountTest` — **4** statements before the fix, **1** after |
+| The cache really removes database work | `CacheBehaviorIntegrationTest` — **1** statement on the first read, **0** on the second; eviction asserted on create/delete |
+| Retries cannot create duplicates | `IdempotencyIntegrationTest` — replay with `Idempotent-Replay: true`, `409` on key reuse |
+| Security distinguishes unauthenticated from unauthorised | `SecurityIntegrationTest` — `401` without a token, `403` for the wrong role |
+| Every failure is a structured contract | `EmployeeControllerTest` — field-level `400` bodies; correlation id asserted in `CorrelationIdFilterTest` |
+| Async work cannot starve or lose the trace | `AsyncConfigTest` — pool bounds plus MDC propagation |
+| All of the above is green | **48 tests**, `mvn test` |
 
 ---
 
@@ -189,6 +207,83 @@ Implementation notes:
 Covered by `EmployeeSearchIntegrationTest` (paging, sorting, combined filters,
 rejected sort field, rejected page size) and a Mockito unit test for the
 service mapping.
+
+---
+
+## Caching: Redis on the Hot Read Path
+
+Two endpoints are hit on almost every page load and are cached:
+
+| Cache         | Key                                    | TTL  | Evicted by |
+| ------------- | -------------------------------------- | ---- | ---------- |
+| `employees`   | the employee id                        | 10m  | `DELETE /api/employees/{id}` |
+| `departments` | one entry (`SimpleKey.EMPTY`)          | 5m   | `POST /api/departments`, `POST /api/employees`, `DELETE /api/employees/{id}` |
+
+The department listing embeds its employees, so an employee write invalidates
+it as well — the cache does not know about joins, and pretending otherwise is
+how stale data reaches users.
+
+```java
+@Cacheable(cacheNames = CacheConfig.EMPLOYEES, key = "#id")
+@Transactional(readOnly = true)
+public EmployeeResponse getEmployeeById(Long id) { ... }
+
+@Caching(evict = {
+        @CacheEvict(cacheNames = CacheConfig.EMPLOYEES, key = "#id"),
+        @CacheEvict(cacheNames = CacheConfig.DEPARTMENTS, allEntries = true)
+})
+public void deleteEmployee(Long id) { ... }
+```
+
+Design decisions:
+
+- **Per-cache TTL** — a missed eviction self-heals within minutes instead of
+  staying wrong forever.
+- **Keys are namespaced** (`employee-api:employees::1`) so several services can
+  share one Redis instance without collisions, and an operator can see which
+  application owns a key.
+- **Values are JSON, not JDK-serialised bytes** — `redis-cli GET` returns a
+  readable payload. Records are `final`, so the serializer is configured with
+  `DefaultTyping.EVERYTHING`; otherwise a cached record would deserialize into a
+  `LinkedHashMap` and fail on the *second* request. For the same reason the
+  department list is materialised as an `ArrayList` (`Stream.toList()` returns a
+  JDK-internal immutable class that cannot be reconstructed).
+- **`null` is never cached**, so an unknown id keeps returning a real `404`
+  instead of a cached "not found".
+- **Deliberately not cached** — user lookups (authorities must be reloaded per
+  request, see the security notes) and search results (the key space is
+  unbounded and the hit ratio is poor).
+- **Statistics enabled** — hit/miss counters are exposed as
+  `GET /actuator/metrics/cache.gets?tag=cache:employees&tag=result:hit`, so the
+  cache is tuned from measurements rather than intuition.
+
+**Verification.** `CacheBehaviorIntegrationTest` counts SQL statements through a
+Hibernate `StatementInspector` and asserts **1 statement on the first read, 0 on
+the second**, plus eviction on delete and on create. Confirmed against a live
+Redis instance:
+
+```
+127.0.0.1:6379> TTL employee-api:employees::2
+(integer) 599
+127.0.0.1:6379> GET employee-api:employees::2
+"{\"@class\":\"com.wangqi.employee.dto.EmployeeResponse\",\"id\":[\"java.lang.Long\",2],
+ \"firstName\":\"Bob\", ... \"createdAt\":[\"java.time.Instant\",\"2026-10-23T02:43:06.233618Z\"]}"
+```
+
+Configuration (`application.yml`, overridable by environment):
+
+| Property                  | Default     | Environment variable |
+| ------------------------- | ----------- | -------------------- |
+| `spring.data.redis.host`  | `127.0.0.1` | `REDIS_HOST`         |
+| `spring.data.redis.port`  | `6379`      | `REDIS_PORT`         |
+| `spring.data.redis.password` | `wangqi` | `REDIS_PASSWORD`     |
+| `app.cache.provider`      | `redis`     | `CACHE_PROVIDER`     |
+| `app.cache.employee-ttl`  | `10m`       | —                    |
+| `app.cache.department-ttl`| `5m`        | —                    |
+
+Tests set `app.cache.provider=simple` and `spring.cache.type=simple` (see
+`src/test/resources/application.properties`), so `mvn test` runs without a Redis
+server while still exercising the same `@Cacheable` / `@CacheEvict` annotations.
 
 ---
 
@@ -378,6 +473,7 @@ docker compose up --build
 # API:      http://localhost:8080
 # Swagger:  http://localhost:8080/swagger-ui.html
 # Health:   http://localhost:8080/actuator/health
+# Redis:    localhost:6379 (password from REDIS_PASSWORD, default `wangqi`)
 ```
 
 - **Multi-stage build** — Maven + full JDK in the build stage, a JRE-only Alpine
@@ -386,8 +482,11 @@ docker compose up --build
 - **Non-root** — the container runs as an unprivileged `app` user.
 - **Health check** — the image and Compose both probe `/actuator/health`, so
   orchestration sees "starting" versus "healthy" instead of guessing.
-- **Configuration by environment** — `JWT_SECRET` and `EXTERNAL_HR_URL` are
-  overridable without rebuilding the image.
+- **Configuration by environment** — `JWT_SECRET`, `EXTERNAL_HR_URL`,
+  `REDIS_HOST` and `REDIS_PASSWORD` are overridable without rebuilding the image.
+- **Redis service** — Compose starts Redis with a password and an AOF file, and
+  the API waits for its health check before starting, so the first cached read
+  cannot race the cache server.
 
 ---
 
@@ -493,6 +592,9 @@ from the browser.
 
 - JDK 17 or newer
 - Maven 3.8+
+- Redis 6+ running locally (the default password is `wangqi`; override with
+  `REDIS_PASSWORD`). To skip Redis entirely, run with
+  `CACHE_PROVIDER=simple` and the same in-memory cache the tests use.
 - Docker (optional, for the container workflow)
 
 ### Run the application
@@ -505,8 +607,8 @@ The API starts on `http://localhost:8080`.
 
 Retry and timeout behaviour is configurable in `application.yml`
 (`app.external-hr.max-attempts`, `initial-backoff`, `timeout`, `base-url`).
-`JWT_SECRET` and `EXTERNAL_HR_URL` can be overridden through environment
-variables.
+`JWT_SECRET`, `EXTERNAL_HR_URL`, `REDIS_HOST`, `REDIS_PORT` and
+`REDIS_PASSWORD` can be overridden through environment variables.
 
 Or run the packaged image:
 
@@ -570,6 +672,15 @@ curl -s "http://localhost:8080/api/employees?jobTitle=engineer&minSalary=5000&pa
 
 # 10. Unsupported sort field -> 400 Bad Request, listing the allowed fields
 curl -s "http://localhost:8080/api/employees?sort=password,asc" -H "Authorization: Bearer $TOKEN"
+
+# 11. Read the same employee twice, then inspect the cache
+curl -s http://localhost:8080/api/employees/1 -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:8080/api/employees/1 -H "Authorization: Bearer $TOKEN"
+#    -> 1 miss, 1 hit; the second call sends no SQL at all
+curl -s "http://localhost:8080/actuator/metrics/cache.gets?tag=cache:employees&tag=result:hit" \
+  -H "Authorization: Bearer $TOKEN"
+#    -> the key lives in Redis as readable JSON with a TTL
+redis-cli -a wangqi TTL employee-api:employees::1
 ```
 
 Log in as `viewer` / `viewer123` and repeat step 3 to see the **403 Forbidden**
@@ -587,6 +698,8 @@ src/main/java/com/wangqi/employee
 ├── EmployeeManagementApplication.java   # Spring Boot entry point
 ├── config/
 │   ├── AsyncConfig.java                 # Bounded notification pool + MDC decorator
+│   ├── CacheConfig.java                 # Redis cache manager, TTLs, JSON serializer
+│   ├── CacheProperties.java             # app.cache tuning knobs
 │   ├── DemoUserInitializer.java         # Seeds demo admin/viewer accounts
 │   ├── ExternalHrProperties.java        # app.external-hr tuning knobs
 │   ├── RestClientConfig.java            # RestClient with connect/read timeouts
@@ -641,11 +754,15 @@ src/test/java/com/wangqi/employee
 ├── controller/IdempotencyIntegrationTest.java  # Replay, 409, no duplicates
 ├── controller/EmployeeSearchIntegrationTest.java # Paging, filters, sort, 400s
 ├── config/AsyncConfigTest.java                 # Pool bounds + MDC propagation
+├── config/CacheConfigTest.java                 # TTLs + JSON round-trip of cached DTOs
 ├── observability/CorrelationIdFilterTest.java  # Generate, reuse, sanitise
-└── support/QueryCounter.java                   # Hibernate StatementInspector
+├── support/QueryCounter.java                   # Hibernate StatementInspector
+└── service/CacheBehaviorIntegrationTest.java   # 1 statement then 0; eviction on writes
+
+src/test/resources/application.properties       # app.cache.provider=simple (no Redis needed)
 
 Dockerfile               # multi-stage build (JDK build -> JRE runtime)
-docker-compose.yml       # one-command local run with health check
+docker-compose.yml       # API + Redis, one-command local run with health checks
 .dockerignore
 ```
 
@@ -670,6 +787,10 @@ docker-compose.yml       # one-command local run with health check
 - Query discipline on the read path too: filtering and sorting are pushed into
   SQL, the page size is capped, the sort surface is whitelisted, and the
   response is a stable envelope rather than a framework-internal type.
+- Performance where it matters: the hot read endpoints are served from Redis,
+  the database is skipped entirely on a hit (asserted as 0 SQL statements in a
+  test), invalidations are mapped to every write that changes a cached view, and
+  hit/miss counters are exposed so the cache can be tuned from data.
 - A documented API: the OpenAPI document is generated from the running code, so
   it cannot drift from the implementation the way a hand-written spec does.
 - Operability: a correlation id that survives the async boundary, a health and
