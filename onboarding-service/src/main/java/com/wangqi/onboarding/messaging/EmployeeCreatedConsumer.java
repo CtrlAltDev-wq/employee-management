@@ -1,5 +1,7 @@
-package com.wangqi.employee.messaging;
+package com.wangqi.onboarding.messaging;
 
+import com.wangqi.contracts.messaging.EmployeeCreatedMessage;
+import com.wangqi.onboarding.service.OnboardingInitializer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -8,11 +10,10 @@ import org.springframework.stereotype.Component;
 /**
  * Consumes {@code employee.created} and starts the onboarding workflow.
  *
- * <p>The consumer does one small, transactional unit of work and returns. Slow
- * downstream work (mail delivery, provisioning) belongs to other services
- * subscribing to the same exchange — that is the point of the broker: the
- * employee API does not know or care who reacts to the event, and a consumer
- * outage cannot slow down {@code POST /api/employees}.
+ * <p>This class lives in its own service now. The producer still publishes the
+ * same event to the same exchange; nothing on the write path knows where the
+ * consumer runs. With {@code spring.rabbitmq.listener.simple.observation-enabled}
+ * the listener continues the publisher's trace instead of starting a new one.
  *
  * @author wangqi
  */

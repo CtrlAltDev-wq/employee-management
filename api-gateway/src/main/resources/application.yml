@@ -1,0 +1,48 @@
+spring:
+  application:
+    name: api-gateway
+
+  cloud:
+    gateway:
+      # Clients talk to :8000 only. Target URIs are overridable so the same
+      # image works with localhost in development and service names in Compose.
+      routes:
+        - id: employee-api
+          uri: ${EMPLOYEE_API_URI:http://localhost:8080}
+          predicates:
+            - Path=/api/auth/**,/api/employees/**,/api/departments/**,/v3/api-docs/**,/swagger-ui/**,/swagger-ui.html
+        - id: onboarding-service
+          uri: ${ONBOARDING_SERVICE_URI:http://localhost:8081}
+          predicates:
+            - Path=/api/onboarding/**
+
+server:
+  port: 8000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: ${ZIPKIN_ENDPOINT:http://localhost:9411/api/v2/spans}
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [trace=%X{traceId:-none}] %logger{36} - %msg%n"
+
+info:
+  app:
+    name: api-gateway
+    author: wangqi
+    description: Spring Cloud Gateway in front of the employee API and onboarding service

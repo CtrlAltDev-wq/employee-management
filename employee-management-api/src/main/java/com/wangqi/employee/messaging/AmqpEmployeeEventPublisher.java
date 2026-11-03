@@ -1,5 +1,6 @@
 package com.wangqi.employee.messaging;
 
+import com.wangqi.contracts.messaging.EmployeeCreatedMessage;
 import com.wangqi.employee.config.MessagingProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

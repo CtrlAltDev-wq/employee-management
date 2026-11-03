@@ -1,23 +1,28 @@
 # syntax=docker/dockerfile:1
 
+# Build context is the repository root (see docker-compose.yml).
+
 # ---- Build stage: compile and package with the full JDK ----
 FROM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /workspace
 
-# Dependencies are cached in their own layer: rebuilding after a source change
-# does not re-download the world.
 COPY pom.xml .
-RUN mvn -B -q dependency:go-offline
+COPY contracts/pom.xml contracts/pom.xml
+COPY employee-management-api/pom.xml employee-management-api/pom.xml
+COPY onboarding-service/pom.xml onboarding-service/pom.xml
+COPY api-gateway/pom.xml api-gateway/pom.xml
+RUN mvn -B -q -pl employee-management-api -am dependency:go-offline
 
-COPY src ./src
-RUN mvn -B -q clean package -DskipTests
+COPY contracts/src contracts/src
+COPY employee-management-api/src employee-management-api/src
+RUN mvn -B -q -pl employee-management-api -am clean package -DskipTests
 
 # ---- Runtime stage: JRE only, non-root user ----
 FROM eclipse-temurin:17-jre-alpine
 WORKDIR /app
 
 RUN addgroup -S app && adduser -S app -G app
-COPY --from=build /workspace/target/*.jar app.jar
+COPY --from=build /workspace/employee-management-api/target/*.jar app.jar
 RUN chown -R app:app /app
 USER app
 

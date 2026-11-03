@@ -1,6 +1,6 @@
-package com.wangqi.employee.repository;
+package com.wangqi.onboarding.repository;
 
-import com.wangqi.employee.entity.OnboardingTask;
+import com.wangqi.onboarding.entity.OnboardingTask;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 

@@ -1,4 +1,4 @@
-package com.wangqi.employee.entity;
+package com.wangqi.onboarding.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;

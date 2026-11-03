@@ -37,6 +37,10 @@ spring:
     connection-timeout: 3s
     # The broker confirms it accepted the message; a nack is logged by the publisher.
     publisher-confirm-type: correlated
+    template:
+      # Creates an observation around every send, so the trace context travels
+      # to the consumer in the AMQP message headers.
+      observation-enabled: true
     listener:
       simple:
         # A failing message goes to the dead-letter queue instead of hot-looping.
@@ -55,13 +59,25 @@ management:
   endpoint:
     health:
       show-details: always
+  health:
+    rabbit:
+      # Without a broker in local runs the indicator would report DOWN even
+      # though the service is healthy by design; it follows the messaging switch.
+      enabled: ${app.messaging.enabled:true}
   metrics:
     tags:
       application: ${spring.application.name}
+  tracing:
+    sampling:
+      # Demo: trace every request. A production service would sample a few percent.
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: ${ZIPKIN_ENDPOINT:http://localhost:9411/api/v2/spans}
 
 logging:
   pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{requestId:-no-request-id}] %logger{36} - %msg%n"
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [trace=%X{traceId:-none} request=%X{requestId:-none}] %logger{36} - %msg%n"
 
 info:
   app:
@@ -82,8 +98,6 @@ app:
     enabled: ${MESSAGING_ENABLED:true}
     exchange: employee.events
     routing-key: employee.created
-    queue: employee.created.onboarding
-    dead-letter-queue: employee.created.onboarding.dlq
   jwt:
     # HS256 signing key. Override with the JWT_SECRET environment variable in production.
     secret: ${JWT_SECRET:wangqi-employee-api-dev-secret-key-change-me-in-production-0123456789}

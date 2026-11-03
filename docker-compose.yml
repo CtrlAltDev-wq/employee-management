@@ -37,9 +37,17 @@ services:
       retries: 10
     restart: unless-stopped
 
-  app:
+  zipkin:
+    image: openzipkin/zipkin:3
+    container_name: employee-management-zipkin
+    ports:
+      - "9411:9411"     # UI and collector, http://localhost:9411
+    restart: unless-stopped
+
+  employee-api:
     build:
       context: .
+      dockerfile: employee-management-api/Dockerfile
     image: wangqi/employee-management-api:1.0.0
     container_name: employee-management-api
     ports:
@@ -49,6 +57,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      zipkin:
+        condition: service_started
     environment:
       # Override in a real deployment; the built-in default is a dev key.
       JWT_SECRET: ${JWT_SECRET:-wangqi-employee-api-dev-secret-key-change-me-in-production-0123456789}
@@ -60,9 +70,68 @@ services:
       RABBITMQ_PORT: 5672
       RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-wangqi}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-wangqi}
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
       JAVA_OPTS: "-XX:MaxRAMPercentage=75"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  onboarding-service:
+    build:
+      context: .
+      dockerfile: onboarding-service/Dockerfile
+    image: wangqi/onboarding-service:1.0.0
+    container_name: employee-management-onboarding
+    ports:
+      - "8081:8081"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      zipkin:
+        condition: service_started
+    environment:
+      # Must be the same key the employee API signs with.
+      JWT_SECRET: ${JWT_SECRET:-wangqi-employee-api-dev-secret-key-change-me-in-production-0123456789}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-wangqi}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-wangqi}
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+      JAVA_OPTS: "-XX:MaxRAMPercentage=75"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: api-gateway/Dockerfile
+    image: wangqi/api-gateway:1.0.0
+    container_name: employee-management-gateway
+    ports:
+      - "8000:8000"
+    depends_on:
+      employee-api:
+        condition: service_healthy
+      onboarding-service:
+        condition: service_healthy
+      zipkin:
+        condition: service_started
+    environment:
+      EMPLOYEE_API_URI: http://employee-api:8080
+      ONBOARDING_SERVICE_URI: http://onboarding-service:8081
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+      JAVA_OPTS: "-XX:MaxRAMPercentage=75"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/actuator/health | grep -q '\"status\":\"UP\"'"]
       interval: 30s
       timeout: 3s
       retries: 3

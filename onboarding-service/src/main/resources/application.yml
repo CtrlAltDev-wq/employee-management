@@ -1,0 +1,85 @@
+spring:
+  application:
+    name: onboarding-service
+
+  # Own database, own schema: the service never reads the employee tables.
+  datasource:
+    url: jdbc:h2:mem:onboardingdb;DB_CLOSE_DELAY=-1;MODE=MySQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  rabbitmq:
+    host: ${RABBITMQ_HOST:127.0.0.1}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:wangqi}
+    password: ${RABBITMQ_PASSWORD:wangqi}
+    connection-timeout: 3s
+    listener:
+      simple:
+        # A failing message goes to the dead-letter queue instead of hot-looping.
+        default-requeue-rejected: false
+        # Continues the publisher's trace instead of starting a new one, so the
+        # same traceId spans HTTP request -> exchange -> consumer.
+        observation-enabled: true
+
+server:
+  port: 8081
+  error:
+    include-message: always
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  health:
+    rabbit:
+      # Without a broker in local runs the indicator would report DOWN even
+      # though the service is healthy by design; it follows the messaging switch.
+      enabled: ${app.messaging.enabled:true}
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: ${ZIPKIN_ENDPOINT:http://localhost:9411/api/v2/spans}
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [trace=%X{traceId:-none}] %logger{36} - %msg%n"
+
+info:
+  app:
+    name: onboarding-service
+    author: wangqi
+    description: Consumer of employee.created, owner of the onboarding workflow
+
+app:
+  messaging:
+    # false skips the listener and the topology — the switch the test suite uses.
+    enabled: ${MESSAGING_ENABLED:true}
+    exchange: employee.events
+    routing-key: employee.created
+    queue: employee.created.onboarding
+    dead-letter-queue: employee.created.onboarding.dlq
+  jwt:
+    # Must match the issuer (employee API). Override both with the same JWT_SECRET.
+    secret: ${JWT_SECRET:wangqi-employee-api-dev-secret-key-change-me-in-production-0123456789}
+    expiration: PT1H

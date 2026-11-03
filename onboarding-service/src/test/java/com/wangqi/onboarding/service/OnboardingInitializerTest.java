@@ -1,6 +1,7 @@
-package com.wangqi.employee.messaging;
+package com.wangqi.onboarding.service;
 
-import com.wangqi.employee.repository.OnboardingTaskRepository;
+import com.wangqi.contracts.messaging.EmployeeCreatedMessage;
+import com.wangqi.onboarding.repository.OnboardingTaskRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * @author wangqi
  */
-@SpringBootTest(properties = "app.demo-users.enabled=false")
+@SpringBootTest
 class OnboardingInitializerTest {
 
     @Autowired

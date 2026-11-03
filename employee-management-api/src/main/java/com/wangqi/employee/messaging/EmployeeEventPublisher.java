@@ -1,5 +1,7 @@
 package com.wangqi.employee.messaging;
 
+import com.wangqi.contracts.messaging.EmployeeCreatedMessage;
+
 /**
  * Publishes domain events to the outside world.
  *

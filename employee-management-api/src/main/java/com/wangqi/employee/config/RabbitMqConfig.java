@@ -1,10 +1,6 @@
 package com.wangqi.employee.config;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.core.Binding;
-import org.springframework.amqp.core.BindingBuilder;
-import org.springframework.amqp.core.Queue;
-import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -16,18 +12,17 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Broker topology for the employee event stream.
+ * Producer-side broker topology for the employee event stream.
  *
- * <ul>
- *   <li>a durable topic exchange, so a routing key can fan the event out to
- *       additional consumers later without touching the publisher;</li>
- *   <li>a durable queue bound to {@code employee.created} — durable means the
- *       event survives a broker restart, unlike an in-memory queue;</li>
- *   <li>a dead-letter queue, so a message the consumer rejects is parked for
- *       inspection instead of being redelivered forever;</li>
- *   <li>JSON payloads, so the contract stays language-neutral and readable in
- *       the management UI.</li>
- * </ul>
+ * <p>Only the exchange is declared here. The onboarding queue, its DLQ and the
+ * binding are declared by the consuming service: topology ownership follows the
+ * consumer, so extracting that consumer into its own process required no change
+ * to this class. Declaring the durable topic exchange on the producer side means
+ * a publish never fails with {@code 404 NOT_FOUND} just because no consumer has
+ * started yet.
+ *
+ * <p>Payloads are JSON so the contract stays language-neutral and readable in
+ * the management UI.
  *
  * @author wangqi
  */
@@ -40,28 +35,6 @@ public class RabbitMqConfig {
     @Bean
     TopicExchange employeeEventsExchange(MessagingProperties properties) {
         return new TopicExchange(properties.exchange(), true, false);
-    }
-
-    @Bean
-    Queue onboardingQueue(MessagingProperties properties) {
-        return QueueBuilder.durable(properties.queue())
-                // The default exchange routes a rejected message to the DLQ.
-                .deadLetterExchange("")
-                .deadLetterRoutingKey(properties.deadLetterQueue())
-                .build();
-    }
-
-    @Bean
-    Queue onboardingDeadLetterQueue(MessagingProperties properties) {
-        return QueueBuilder.durable(properties.deadLetterQueue()).build();
-    }
-
-    @Bean
-    Binding onboardingBinding(Queue onboardingQueue, TopicExchange employeeEventsExchange,
-                              MessagingProperties properties) {
-        return BindingBuilder.bind(onboardingQueue)
-                .to(employeeEventsExchange)
-                .with(properties.routingKey());
     }
 
     @Bean

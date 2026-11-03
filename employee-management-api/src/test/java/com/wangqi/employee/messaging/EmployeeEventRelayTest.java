@@ -1,5 +1,6 @@
 package com.wangqi.employee.messaging;
 
+import com.wangqi.contracts.messaging.EmployeeCreatedMessage;
 import com.wangqi.employee.event.EmployeeCreatedEvent;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

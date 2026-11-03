@@ -1,7 +1,8 @@
-package com.wangqi.employee.messaging;
+package com.wangqi.onboarding.service;
 
-import com.wangqi.employee.entity.OnboardingTask;
-import com.wangqi.employee.repository.OnboardingTaskRepository;
+import com.wangqi.contracts.messaging.EmployeeCreatedMessage;
+import com.wangqi.onboarding.entity.OnboardingTask;
+import com.wangqi.onboarding.repository.OnboardingTaskRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
