@@ -16,7 +16,7 @@ tracing and metrics**, **bounded async execution**, **automated tests**, three
 **container images**, and a measured fix for the classic **JPA N+1 query
 problem**.
 
-> Author: **wangqi**
+> Author: **Qi Wang**
 
 ---
 
