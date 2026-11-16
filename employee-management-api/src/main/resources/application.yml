@@ -97,10 +97,12 @@ info:
 
 app:
   cors:
-    # Only relevant when a browser calls the API without a proxy in front of it.
-    # Development and production both proxy /api, so this list stays empty of
-    # surprises; override with a comma-separated CORS_ALLOWED_ORIGINS.
-    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+    # Since both environments proxy /api, requests look same-origin, but a
+    # browser still sends Origin on POST/PUT/DELETE. The Nginx-served SPA
+    # therefore has to be listed next to the Vite dev server, or Spring
+    # rejects the login as "Invalid CORS request". Override with a
+    # comma-separated CORS_ALLOWED_ORIGINS.
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost,http://127.0.0.1,http://localhost:5173,http://127.0.0.1:5173}
     max-age-seconds: 3600
   cache:
     # "redis" in production/test environments with a server; "simple" makes

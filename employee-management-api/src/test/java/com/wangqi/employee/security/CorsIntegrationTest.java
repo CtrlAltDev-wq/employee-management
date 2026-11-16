@@ -44,6 +44,22 @@ class CorsIntegrationTest {
     }
 
     @Test
+    @DisplayName("the Nginx-served SPA origin is allowed as well")
+    void shouldAllowServedSpaOrigin() throws Exception {
+        // MockMvc's own origin is http://localhost, so a request carrying that
+        // exact Origin looks same-origin and skips the CORS path. The loopback
+        // address is the equivalent origin the SPA can be opened on, and it is
+        // cross-origin from here, which is what the Nginx deployment hits.
+        String servedOrigin = "http://127.0.0.1";
+        mockMvc.perform(options("/api/auth/login")
+                        .header(HttpHeaders.ORIGIN, servedOrigin)
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS, "content-type"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, servedOrigin));
+    }
+
+    @Test
     @DisplayName("an origin outside the allow-list is rejected")
     void shouldRejectUnknownOrigin() throws Exception {
         mockMvc.perform(options("/api/employees")
