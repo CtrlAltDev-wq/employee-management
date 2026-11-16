@@ -2,6 +2,16 @@ spring:
   application:
     name: employee-management-api
 
+  profiles:
+    active: mysql
+
+  cache:
+    # Mirrors app.cache.provider: "redis" selects the JSON-backed manager in
+    # CacheConfig, "simple" selects Spring's in-memory manager when no Redis
+    # server is available. Without this, Boot would auto-configure a Redis
+    # manager that serialises values with JDK serialization.
+    type: ${CACHE_PROVIDER:redis}
+
   datasource:
     url: jdbc:h2:mem:employeedb;DB_CLOSE_DELAY=-1;MODE=MySQL
     driver-class-name: org.h2.Driver
@@ -86,6 +96,12 @@ info:
     description: Java 17 / Spring Boot 3 reference API
 
 app:
+  cors:
+    # Only relevant when a browser calls the API without a proxy in front of it.
+    # Development and production both proxy /api, so this list stays empty of
+    # surprises; override with a comma-separated CORS_ALLOWED_ORIGINS.
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+    max-age-seconds: 3600
   cache:
     # "redis" in production/test environments with a server; "simple" makes
     # integration tests run without Redis (in-memory ConcurrentMapCacheManager).

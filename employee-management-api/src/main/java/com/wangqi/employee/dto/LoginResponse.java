@@ -2,8 +2,14 @@ package com.wangqi.employee.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 
+import java.util.List;
+
 /**
  * Token returned by a successful login.
+ *
+ * <p>The granted roles travel with the token so the SPA can render the menu and
+ * the write actions it is allowed to use. They are a display hint only: every
+ * endpoint still authorises the caller on the server.
  *
  * @author wangqi
  */
@@ -20,6 +26,10 @@ public record LoginResponse(
         long expiresInSeconds,
 
         @Schema(description = "Authenticated username", example = "admin")
-        String username
+        String username,
+
+        @Schema(description = "Granted authorities, used by the client to hide actions",
+                example = "[\"ROLE_ADMIN\"]")
+        List<String> roles
 ) {
 }

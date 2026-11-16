@@ -1,0 +1,19 @@
+spring:
+  # The database is created on first start when the account is allowed to
+  # create schemas. Override the values with environment variables.
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:employee_management}?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=utf8
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:wangqi}
+
+  jpa:
+    # "update" creates the tables on the first run and keeps the data on later
+    # runs, which is what makes a restart a useful persistence check.
+    hibernate:
+      ddl-auto: update
+
+  # The H2 console is meaningless against MySQL.
+  h2:
+    console:
+      enabled: false

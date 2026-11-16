@@ -109,6 +109,13 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Selected by the "mysql" profile; H2 stays the zero-setup default. -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>

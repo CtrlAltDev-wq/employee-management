@@ -175,6 +175,18 @@ class SecurityIntegrationTest {
                 .andExpect(jsonPath("$.code").value(403));
     }
 
+    @Test
+    @DisplayName("login returns the granted roles so the SPA can render permissions")
+    void shouldReturnRolesOnLogin() throws Exception {
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new Credentials("viewer", "viewer123"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.username").value("viewer"))
+                .andExpect(jsonPath("$.data.roles.length()").value(1))
+                .andExpect(jsonPath("$.data.roles[0]").value("ROLE_USER"));
+    }
+
     private String login(String username, String password) throws Exception {
         String response = mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)

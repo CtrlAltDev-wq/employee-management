@@ -1,6 +1,7 @@
 package com.wangqi.employee.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wangqi.employee.config.CorsProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -15,6 +16,11 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.List;
 
 /**
  * Stateless security configuration.
@@ -30,14 +36,15 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  */
 @Configuration
 @EnableWebSecurity
-@EnableConfigurationProperties(JwtProperties.class)
+@EnableConfigurationProperties({JwtProperties.class, CorsProperties.class})
 public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
                                                    JwtService jwtService,
                                                    UserDetailsService userDetailsService,
-                                                   ObjectMapper objectMapper) throws Exception {
+                                                   ObjectMapper objectMapper,
+                                                   CorsConfigurationSource corsConfigurationSource) throws Exception {
         RestAuthenticationEntryPoint entryPoint = new RestAuthenticationEntryPoint(objectMapper);
         RestAccessDeniedHandler accessDeniedHandler = new RestAccessDeniedHandler(objectMapper);
         JwtAuthenticationFilter jwtAuthenticationFilter =
@@ -45,6 +52,7 @@ public class SecurityConfig {
 
         http
                 .csrf(csrf -> csrf.disable())
+                .cors(cors -> cors.configurationSource(corsConfigurationSource))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/api/auth/**", "/h2-console/**",
@@ -63,6 +71,32 @@ public class SecurityConfig {
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
+    }
+
+    /**
+     * One CORS policy for the whole API, driven by configuration so the same
+     * image can be deployed anywhere ({@code CORS_ALLOWED_ORIGINS=https://app.example.com}).
+     * Preflight requests short-circuit before the JWT filter, which is why
+     * browsers never see a 401 on {@code OPTIONS}.
+     */
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource(CorsProperties properties) {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOrigins(properties.allowedOrigins() == null
+                ? List.of()
+                : properties.allowedOrigins());
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedHeaders(List.of(
+                "Authorization", "Content-Type", "Idempotency-Key", "X-Request-Id"));
+        configuration.setExposedHeaders(List.of("X-Request-Id", "Idempotent-Replay", "Location"));
+        // Authentication travels in the Authorization header, never in a cookie,
+        // so credentials stay disabled and the origin list is the only gate.
+        configuration.setAllowCredentials(false);
+        configuration.setMaxAge(properties.maxAgeSeconds());
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        return source;
     }
 
     @Bean

@@ -739,6 +739,7 @@ port of the owning service is shown in the last column.
 | `GET`    | `/api/employees/{id}` | employee-api     | —                                                        | `200 OK`            | `401 Unauthorized`, `404 Not Found` |
 | `GET`    | `/api/employees`      | employee-api     | query params (`firstName`, `lastName`, `email`, `jobTitle`, `departmentId`, `minSalary`, `maxSalary`, `page`, `size`, `sort`) | `200 OK` | `400 Bad Request`, `401 Unauthorized` |
 | `POST`   | `/api/employees`      | employee-api     | JSON (`firstName`, `lastName`, `email`, `jobTitle`, `salary`, optional `departmentId`); optional `Idempotency-Key` header | `201 Created`  | `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, `404 Not Found`, `409 Conflict` |
+| `PUT`    | `/api/employees/{id}` | employee-api     | JSON (`firstName`, `lastName`, `email`, `jobTitle`, `salary`, optional `departmentId`) | `200 OK` | `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, `404 Not Found`, `409 Conflict` |
 | `POST`   | `/api/employees/{id}/sync` | employee-api | — (pushes the employee to the external HR system)        | `200 OK`            | `401 Unauthorized`, `404 Not Found`, `502 Bad Gateway` |
 | `DELETE` | `/api/employees/{id}` | employee-api     | —                                                        | `200 OK` (empty envelope) | `401 Unauthorized`, `403 Forbidden`, `404 Not Found` |
 | `POST`   | `/api/departments`    | employee-api     | JSON (`name`)                                            | `201 Created`       | `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, `409 Conflict` |
@@ -948,6 +949,26 @@ Retry and timeout behaviour is configurable in the employee API's
 `EMPLOYEE_API_URI` and `ONBOARDING_SERVICE_URI` can be overridden through
 environment variables.
 
+### Run against MySQL instead of H2
+
+The default datasource is in-memory H2, so every restart starts empty. The
+`mysql` profile switches to a real server, creates the schema on first start
+and keeps the rows across restarts:
+
+```bash
+MYSQL_USERNAME=root MYSQL_PASSWORD=secret \
+  mvn -pl employee-management-api spring-boot:run -Dspring-boot.run.profiles=mysql
+```
+
+`MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USERNAME`, `MYSQL_PASSWORD` and
+`MYSQL_DATABASE` (default `employee_management`) override the defaults. A
+throwaway server, if port 3306 is free:
+
+```bash
+docker run -d --name employee-mysql -p 3306:3306 \
+  -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_DATABASE=employee_management mysql:8.0
+```
+
 Or run the packaged containers:
 
 ```bash
@@ -1049,6 +1070,54 @@ paths, which keeps the operational surface off the public entry point.
 
 ---
 
+## Frontend: Vue 3 SPA
+
+`frontend/` is a Vite + Vue 3 + TypeScript + Element Plus client for the same
+API. It calls the employee service through the `/api` prefix and unwraps the
+`Result<T>` envelope in one place.
+
+- **Authentication:** the login page calls `POST /api/auth/login`, stores the
+  JWT in `localStorage`, and a request interceptor attaches it as a Bearer token
+  on every call. A `401` clears the session and redirects to `/login`, keeping
+  the original path so the user lands back where they were.
+- **Layout:** collapsible sidebar, breadcrumb, account menu and a sign-out
+  confirmation.
+- **Employees:** server-side filtering (first name, last name, email,
+  department), paging and sorting, plus a create/edit dialog and a delete
+  confirmation. Client-side rules mirror the backend constraints.
+- **Dashboard:** headcount cards and an ECharts doughnut of the department
+  distribution, derived from `GET /api/employees` (`totalElements`) and
+  `GET /api/departments`.
+- **Error handling:** a single interceptor unwraps `Result<T>`, renders field
+  errors and maps `401` / `403` / `500` to one readable message, so pages never
+  branch on HTTP status.
+- **Roles in the UI:** the login response carries the granted authorities, so a
+  router guard (`meta.roles`), a role filter over the route table and a
+  `v-permission` directive hide the pages and the write actions an account
+  cannot use. A `viewer` sees the same directory with no create, edit or delete
+  controls. The server still authorises every call: hiding a button is
+  convenience, `403` is the contract.
+- **CORS:** `SecurityConfig` answers preflights from the origins listed in
+  `app.cors.allowed-origins` (`CORS_ALLOWED_ORIGINS`). Development and
+  production both proxy `/api`, so the browser stays same-origin and the list
+  only matters for a browser-to-API deployment.
+
+```bash
+cd frontend
+npm install
+npm run dev      # http://localhost:5173, /api proxied to http://localhost:8080
+npm run build    # vue-tsc type check, then static assets in dist/
+```
+
+Start the employee API first: the dev server proxies `/api` to port 8080, which
+keeps the browser same-origin and needs no CORS configuration. Demo accounts:
+`admin / admin123` (ADMIN) and `viewer / viewer123` (USER, read only).
+
+> Phase 2 also added `PUT /api/employees/{id}`. The edit dialog needs it, and the
+> API previously offered create, read, search and delete only.
+
+---
+
 ## Project Structure
 
 ```
@@ -1105,6 +1174,15 @@ employee-management/                      # Maven reactor (packaging: pom)
 ├── api-gateway/                           # Service 3: the public entry point
 │   └── src/main/java/com/wangqi/gateway/ApiGatewayApplication.java
 │       └── resources/application.yml      # Port 8000, two routes, traceId logging
+│
+├── frontend/                              # Vue 3 SPA (Vite + TypeScript + Element Plus)
+│   ├── src/api/                           # Typed contracts, Axios interceptors
+│   ├── src/stores/auth.ts                 # Session (JWT mirrored to localStorage)
+│   ├── src/router/index.ts                # Routes + authentication guard
+│   ├── src/layouts/DefaultLayout.vue      # Sidebar, top bar, breadcrumb
+│   ├── src/components/EmployeeFormDialog.vue
+│   ├── src/views/                         # Login, Dashboard, Employees, NotFound
+│   └── src/styles/main.css                # Design tokens and Element Plus overrides
 │
 ├── employee-management-api/src/test/java/com/wangqi/employee
 │   ├── service/EmployeeServiceImplTest.java         # Mockito unit tests
