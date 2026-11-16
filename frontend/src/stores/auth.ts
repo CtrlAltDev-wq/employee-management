@@ -40,9 +40,17 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * An empty requirement means "any signed-in user", which is what most routes
    * want; otherwise at least one of the listed roles has to be granted.
+   *
+   * <p>An empty role list fails open on purpose: a session stored before roles
+   * existed (or a backend that does not return them yet) must not lock the user
+   * out of every page. The API still rejects forbidden calls with {@code 403},
+   * so the worst case is a visible button that errors instead of a dead app.
    */
   function hasAnyRole(required?: string[]): boolean {
     if (!required || required.length === 0) {
+      return true
+    }
+    if (roles.value.length === 0) {
       return true
     }
     return required.some((role) => roles.value.includes(role))
