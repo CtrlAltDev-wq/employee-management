@@ -1101,7 +1101,7 @@ paths, which keeps the operational surface off the public entry point.
 
 ## Frontend: Vue 3 SPA
 
-`frontend/` is a Vite + Vue 3 + TypeScript + Element Plus client for the same
+`employee-management-web/` is a Vite + Vue 3 + TypeScript + Element Plus client for the same
 API. It calls the employee service through the `/api` prefix and unwraps the
 `Result<T>` envelope in one place.
 
@@ -1132,7 +1132,7 @@ API. It calls the employee service through the `/api` prefix and unwraps the
   only matters for a browser-to-API deployment.
 
 ```bash
-cd frontend
+cd employee-management-web
 npm install
 npm run dev      # http://localhost:5173, /api proxied to http://localhost:8080
 npm run build    # vue-tsc type check, then static assets in dist/
@@ -1204,7 +1204,7 @@ employee-management/                      # Maven reactor (packaging: pom)
 │   └── src/main/java/com/wangqi/gateway/ApiGatewayApplication.java
 │       └── resources/application.yml      # Port 8000, two routes, traceId logging
 │
-├── frontend/                              # Vue 3 SPA (Vite + TypeScript + Element Plus)
+├── employee-management-web/               # Vue 3 SPA (Vite + TypeScript + Element Plus)
 │   ├── src/api/                           # Typed contracts, Axios interceptors
 │   ├── src/stores/auth.ts                 # Session (JWT mirrored to localStorage)
 │   ├── src/router/index.ts                # Routes + authentication guard

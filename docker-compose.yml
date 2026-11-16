@@ -170,7 +170,7 @@ services:
 
   web:
     build:
-      context: ./frontend
+      context: ./employee-management-web
       dockerfile: Dockerfile
     image: wangqi/employee-management-web:1.0.0
     container_name: employee-management-web

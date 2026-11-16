@@ -1013,7 +1013,7 @@ open http://localhost:9411    # search by serviceName=api-gateway
 
 ## 前端：Vue 3 单页应用
 
-`frontend/` 是同一套 API 的 Vite + Vue 3 + TypeScript + Element Plus 客户端。
+`employee-management-web/` 是同一套 API 的 Vite + Vue 3 + TypeScript + Element Plus 客户端。
 它通过 `/api` 前缀访问员工服务，并在一处统一拆解 `Result<T>` 信封。
 
 - **认证：** 登录页调用 `POST /api/auth/login`，把 JWT 存入 `localStorage`；
@@ -1035,7 +1035,7 @@ open http://localhost:9411    # search by serviceName=api-gateway
   该列表只对“浏览器直连 API”的部署方式有意义。
 
 ```bash
-cd frontend
+cd employee-management-web
 npm install
 npm run dev      # http://localhost:5173，/api 代理到 http://localhost:8080
 npm run build    # 先执行 vue-tsc 类型检查，再输出静态资源到 dist/
@@ -1107,7 +1107,7 @@ employee-management/                      # Maven reactor (packaging: pom)
 │   └── src/main/java/com/wangqi/gateway/ApiGatewayApplication.java
 │       └── resources/application.yml      # Port 8000, two routes, traceId logging
 │
-├── frontend/                              # Vue 3 SPA（Vite + TypeScript + Element Plus）
+├── employee-management-web/               # Vue 3 SPA（Vite + TypeScript + Element Plus）
 │   ├── src/api/                           # 类型化契约与 Axios 拦截器
 │   ├── src/stores/auth.ts                 # 会话状态（JWT 同步到 localStorage）
 │   ├── src/router/index.ts                # 路由与登录守卫

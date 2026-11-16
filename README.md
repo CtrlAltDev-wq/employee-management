@@ -11,7 +11,7 @@
 ![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)
 ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-3-FF6600?logo=rabbitmq&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-78%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-82%20passing-brightgreen)
 
 ![Dashboard](docs/screenshots/02-dashboard.png)
 
@@ -116,8 +116,8 @@ mvn spring-boot:run -pl employee-management-api
 # backend — against your own MySQL instead
 SPRING_PROFILES_ACTIVE=mysql mvn spring-boot:run -pl employee-management-api
 
-# frontend — proxies /api to localhost:8080
-cd frontend && npm install && npm run dev
+# web — proxies /api to localhost:8080
+cd employee-management-web && npm install && npm run dev
 ```
 
 Environment overrides: `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_DATABASE`, `MYSQL_USERNAME`, `MYSQL_PASSWORD`, `JWT_SECRET`, `CACHE_PROVIDER` (`redis` / `simple`), `MESSAGING_ENABLED` (`true` / `false`).
@@ -125,8 +125,8 @@ Environment overrides: `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_DATABASE`, `MYSQL_USER
 ## Tests
 
 ```bash
-mvn test                  # 78 tests: contracts, API, onboarding service, gateway
-cd frontend && npm run build   # type-check + production bundle
+mvn test                  # 82 tests: contracts, API, onboarding service, gateway
+cd employee-management-web && npm run build   # type-check + production bundle
 ```
 
 Each engineering claim is backed by a test that fails if the behaviour regresses — the N+1 fix (4 SQL statements → 1), cache hits (zero SQL on a second read), idempotent replays, and the RBAC boundary.
@@ -139,7 +139,7 @@ Each engineering claim is backed by a test that fails if the behaviour regresses
 ├── employee-management-api/   employees, departments, auth, cache, Swagger
 ├── onboarding-service/        consumer of employee.created
 ├── api-gateway/               public entry point
-├── frontend/                  Vue 3 admin console + Nginx image
+├── employee-management-web/   Vue 3 admin console + Nginx image
 ├── docs/                      screenshots and the architecture deep dive
 └── docker-compose.yml         8 containers, one command
 ```
