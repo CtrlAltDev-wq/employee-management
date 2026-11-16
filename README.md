@@ -32,6 +32,8 @@ Open **<http://localhost>** and sign in:
 
 The first run builds four images and pulls MySQL, Redis, RabbitMQ and Zipkin. Stop everything with `docker compose down`; data survives in a named volume (`docker compose down -v` wipes it).
 
+The database starts empty apart from two demo accounts and a demo organisation (6 departments, 42 employees), seeded only when the tables are empty. Set `DEMO_DATA_ENABLED=false` to start with nothing but the accounts.
+
 ## What you get
 
 - **Role-based access control** — the API authorises every request (write operations require `admin`), and the SPA hides routes, menu entries and buttons for the same roles. A viewer sees a read-only directory.

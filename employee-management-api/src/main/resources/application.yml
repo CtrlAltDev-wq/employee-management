@@ -2,9 +2,6 @@ spring:
   application:
     name: employee-management-api
 
-  profiles:
-    active: mysql
-
   cache:
     # Mirrors app.cache.provider: "redis" selects the JSON-backed manager in
     # CacheConfig, "simple" selects Spring's in-memory manager when no Redis
@@ -122,6 +119,11 @@ app:
     expiration: PT1H
   demo-users:
     enabled: true
+  demo-data:
+    # Seeds a small organisation only when the database is empty, so a fresh
+    # checkout opens on a populated dashboard. Set DEMO_DATA_ENABLED=false for
+    # a real deployment.
+    enabled: ${DEMO_DATA_ENABLED:true}
   external-hr:
     base-url: ${EXTERNAL_HR_URL:http://localhost:1}
     max-attempts: 3
