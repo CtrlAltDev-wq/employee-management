@@ -1,6 +1,7 @@
 package com.wangqi.employee.dto;
 
 import com.wangqi.employee.entity.Department;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -16,9 +17,16 @@ import java.util.stream.Collectors;
  *
  * @author wangqi
  */
+@Schema(name = "DepartmentResponse", description = "A department and the employees assigned to it")
 public record DepartmentResponse(
+
+        @Schema(description = "Generated id", example = "1")
         Long id,
+
+        @Schema(description = "Unique department name", example = "Engineering")
         String name,
+
+        @Schema(description = "Employees assigned to this department; empty when none are assigned")
         List<EmployeeSummary> employees
 ) {
 

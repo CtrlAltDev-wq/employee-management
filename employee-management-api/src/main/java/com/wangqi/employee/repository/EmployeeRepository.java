@@ -19,4 +19,9 @@ public interface EmployeeRepository extends JpaRepository<Employee, Long>,
         JpaSpecificationExecutor<Employee> {
 
     boolean existsByEmail(String email);
+
+    /**
+     * Uniqueness check used when updating: an employee may keep its own email.
+     */
+    boolean existsByEmailAndIdNot(String email, Long id);
 }

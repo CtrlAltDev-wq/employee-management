@@ -85,15 +85,15 @@ class EmployeeSearchIntegrationTest {
                         .param("sort", "salary,desc")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.content.length()").value(2))
-                .andExpect(jsonPath("$.content[0].email").value("alice@example.com"))
-                .andExpect(jsonPath("$.content[1].email").value("dave@example.com"))
-                .andExpect(jsonPath("$.page").value(0))
-                .andExpect(jsonPath("$.size").value(2))
-                .andExpect(jsonPath("$.totalElements").value(5))
-                .andExpect(jsonPath("$.totalPages").value(3))
-                .andExpect(jsonPath("$.first").value(true))
-                .andExpect(jsonPath("$.last").value(false));
+                .andExpect(jsonPath("$.data.content.length()").value(2))
+                .andExpect(jsonPath("$.data.content[0].email").value("alice@example.com"))
+                .andExpect(jsonPath("$.data.content[1].email").value("dave@example.com"))
+                .andExpect(jsonPath("$.data.page").value(0))
+                .andExpect(jsonPath("$.data.size").value(2))
+                .andExpect(jsonPath("$.data.totalElements").value(5))
+                .andExpect(jsonPath("$.data.totalPages").value(3))
+                .andExpect(jsonPath("$.data.first").value(true))
+                .andExpect(jsonPath("$.data.last").value(false));
     }
 
     @Test
@@ -104,8 +104,8 @@ class EmployeeSearchIntegrationTest {
                         .param("minSalary", "5000")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalElements").value(2))
-                .andExpect(jsonPath("$.content[*].email",
+                .andExpect(jsonPath("$.data.totalElements").value(2))
+                .andExpect(jsonPath("$.data.content[*].email",
                         containsInAnyOrder("alice@example.com", "bob@example.com")));
     }
 
@@ -116,7 +116,7 @@ class EmployeeSearchIntegrationTest {
                         .param("sort", "password,asc")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.code").value(400))
                 .andExpect(jsonPath("$.message").value(
                         org.hamcrest.Matchers.containsString("Unsupported sort field 'password'")));
     }
@@ -128,7 +128,7 @@ class EmployeeSearchIntegrationTest {
                         .param("size", "500")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.code").value(400))
                 .andExpect(jsonPath("$.fieldErrors.size").exists());
     }
 
@@ -154,7 +154,7 @@ class EmployeeSearchIntegrationTest {
                 .getContentAsString();
 
         JsonNode body = objectMapper.readTree(response);
-        return body.get("accessToken").asText();
+        return body.get("data").get("accessToken").asText();
     }
 
     private record Credentials(String username, String password) {

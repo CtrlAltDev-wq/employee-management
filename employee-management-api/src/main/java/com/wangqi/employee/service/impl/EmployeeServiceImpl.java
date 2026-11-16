@@ -119,6 +119,39 @@ public class EmployeeServiceImpl implements EmployeeService {
             @CacheEvict(cacheNames = CacheConfig.DEPARTMENTS, allEntries = true)
     })
     @Transactional
+    public EmployeeResponse updateEmployee(Long id, EmployeeRequest request) {
+        Employee employee = employeeRepository.findById(id)
+                .orElseThrow(() -> new EmployeeNotFoundException(id));
+
+        // The employee may keep its own email, so uniqueness is checked against
+        // every other row rather than globally.
+        if (employeeRepository.existsByEmailAndIdNot(request.email(), id)) {
+            throw new DuplicateEmailException(request.email());
+        }
+
+        Department department = null;
+        if (request.departmentId() != null) {
+            department = departmentRepository.findById(request.departmentId())
+                    .orElseThrow(() -> new DepartmentNotFoundException(request.departmentId()));
+        }
+
+        employee.setFirstName(request.firstName());
+        employee.setLastName(request.lastName());
+        employee.setEmail(request.email());
+        employee.setJobTitle(request.jobTitle());
+        employee.setSalary(request.salary());
+        employee.setDepartment(department);
+
+        Employee saved = employeeRepository.save(employee);
+        return EmployeeResponse.from(saved);
+    }
+
+    @Override
+    @Caching(evict = {
+            @CacheEvict(cacheNames = CacheConfig.EMPLOYEES, key = "#id"),
+            @CacheEvict(cacheNames = CacheConfig.DEPARTMENTS, allEntries = true)
+    })
+    @Transactional
     public void deleteEmployee(Long id) {
         Employee employee = employeeRepository.findById(id)
                 .orElseThrow(() -> new EmployeeNotFoundException(id));

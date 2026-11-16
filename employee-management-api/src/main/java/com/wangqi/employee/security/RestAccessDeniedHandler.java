@@ -1,7 +1,7 @@
 package com.wangqi.employee.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.wangqi.employee.exception.ErrorResponse;
+import com.wangqi.employee.common.Result;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -30,8 +30,9 @@ public class RestAccessDeniedHandler implements AccessDeniedHandler {
                        AccessDeniedException accessDeniedException) throws IOException {
         response.setStatus(HttpStatus.FORBIDDEN.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setCharacterEncoding("UTF-8");
 
-        ErrorResponse body = ErrorResponse.of(
+        Result<Void> body = Result.failure(
                 HttpStatus.FORBIDDEN,
                 "Access denied: your role is not allowed to perform this operation.",
                 request.getRequestURI()

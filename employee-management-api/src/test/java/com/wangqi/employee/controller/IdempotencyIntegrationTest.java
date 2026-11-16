@@ -100,7 +100,7 @@ class IdempotencyIntegrationTest {
 
         create(employeeJson("second@example.com"), key)
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.code").value(409))
                 .andExpect(jsonPath("$.message").value(
                         org.hamcrest.Matchers.containsString("different request payload")));
 
@@ -137,7 +137,7 @@ class IdempotencyIntegrationTest {
 
     private long employeeId(MvcResult result) throws Exception {
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
-        return body.get("id").asLong();
+        return body.get("data").get("id").asLong();
     }
 
     private String login() throws Exception {
@@ -150,7 +150,7 @@ class IdempotencyIntegrationTest {
                 .getResponse()
                 .getContentAsString();
 
-        return objectMapper.readTree(response).get("accessToken").asText();
+        return objectMapper.readTree(response).get("data").get("accessToken").asText();
     }
 
     private record Credentials(String username, String password) {

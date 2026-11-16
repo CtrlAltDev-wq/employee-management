@@ -7,6 +7,7 @@ import com.wangqi.employee.dto.EmployeeSearchCriteria;
 import com.wangqi.employee.dto.PageResponse;
 import com.wangqi.employee.entity.Employee;
 import com.wangqi.employee.event.EmployeeCreatedEvent;
+import com.wangqi.employee.exception.DuplicateEmailException;
 import com.wangqi.employee.exception.EmployeeNotFoundException;
 import com.wangqi.employee.repository.DepartmentRepository;
 import com.wangqi.employee.repository.EmployeeRepository;
@@ -32,6 +33,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -140,5 +142,67 @@ class EmployeeServiceImplTest {
                 .hasMessageContaining("99");
 
         verify(employeeRepository).findById(99L);
+    }
+
+    @Test
+    @DisplayName("updateEmployee replaces the mutable fields and keeps the id")
+    void shouldUpdateExistingEmployee() {
+        Employee existing = Employee.builder()
+                .id(11L)
+                .firstName("Old")
+                .lastName("Name")
+                .email("old@example.com")
+                .jobTitle("Junior Engineer")
+                .salary(new BigDecimal("3000.00"))
+                .build();
+
+        EmployeeRequest request = new EmployeeRequest(
+                "Qi", "Wang", "qi.wang@example.com", "Backend Engineer", new BigDecimal("5000.00"), null);
+
+        when(employeeRepository.findById(11L)).thenReturn(Optional.of(existing));
+        when(employeeRepository.existsByEmailAndIdNot("qi.wang@example.com", 11L)).thenReturn(false);
+        when(employeeRepository.save(any(Employee.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        EmployeeResponse response = employeeService.updateEmployee(11L, request);
+
+        assertThat(response.id()).isEqualTo(11L);
+        assertThat(response.firstName()).isEqualTo("Qi");
+        assertThat(response.email()).isEqualTo("qi.wang@example.com");
+        assertThat(response.salary()).isEqualByComparingTo("5000.00");
+    }
+
+    @Test
+    @DisplayName("updateEmployee refuses an email already used by another employee")
+    void shouldRejectDuplicateEmailOnUpdate() {
+        Employee existing = Employee.builder()
+                .id(11L)
+                .firstName("Qi")
+                .lastName("Wang")
+                .email("qi.wang@example.com")
+                .salary(new BigDecimal("5000.00"))
+                .build();
+
+        EmployeeRequest request = new EmployeeRequest(
+                "Qi", "Wang", "taken@example.com", "Backend Engineer", new BigDecimal("5000.00"), null);
+
+        when(employeeRepository.findById(11L)).thenReturn(Optional.of(existing));
+        when(employeeRepository.existsByEmailAndIdNot("taken@example.com", 11L)).thenReturn(true);
+
+        assertThatThrownBy(() -> employeeService.updateEmployee(11L, request))
+                .isInstanceOf(DuplicateEmailException.class);
+
+        verify(employeeRepository, never()).save(any(Employee.class));
+    }
+
+    @Test
+    @DisplayName("updateEmployee throws EmployeeNotFoundException when the id is unknown")
+    void shouldThrowWhenUpdatingUnknownEmployee() {
+        when(employeeRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> employeeService.updateEmployee(99L, new EmployeeRequest(
+                "Qi", "Wang", "qi.wang@example.com", "Backend Engineer", new BigDecimal("5000.00"), null)))
+                .isInstanceOf(EmployeeNotFoundException.class);
+
+        verify(employeeRepository, never()).save(any(Employee.class));
     }
 }

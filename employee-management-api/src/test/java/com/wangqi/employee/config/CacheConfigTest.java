@@ -41,7 +41,7 @@ class CacheConfigTest {
     void shouldRoundTripEmployeeResponse() {
         EmployeeResponse original = new EmployeeResponse(
                 7L, "Alice", "Chen", "alice@example.com", "Senior Backend Engineer",
-                new BigDecimal("9000.00"), Instant.parse("2024-01-01T10:15:30Z"));
+                new BigDecimal("9000.00"), 3L, Instant.parse("2024-01-01T10:15:30Z"));
 
         Object restored = serializer.deserialize(serializer.serialize(original));
 

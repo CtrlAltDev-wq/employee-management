@@ -1,7 +1,7 @@
 package com.wangqi.employee.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.wangqi.employee.exception.ErrorResponse;
+import com.wangqi.employee.common.Result;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -14,8 +14,8 @@ import java.io.IOException;
 
 /**
  * Returns a JSON 401 instead of Spring Security's default HTML error page,
- * so unauthenticated clients get the same {@link ErrorResponse} contract as
- * every other failure in the API.
+ * so unauthenticated clients get the same {@link Result} contract as every
+ * other response in the API.
  *
  * @author wangqi
  */
@@ -30,8 +30,9 @@ public class RestAuthenticationEntryPoint implements AuthenticationEntryPoint {
                          AuthenticationException authException) throws IOException {
         response.setStatus(HttpStatus.UNAUTHORIZED.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setCharacterEncoding("UTF-8");
 
-        ErrorResponse body = ErrorResponse.of(
+        Result<Void> body = Result.failure(
                 HttpStatus.UNAUTHORIZED,
                 "Authentication required: send a valid Bearer token.",
                 request.getRequestURI()

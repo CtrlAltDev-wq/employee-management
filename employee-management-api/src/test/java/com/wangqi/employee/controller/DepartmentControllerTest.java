@@ -52,8 +52,8 @@ class DepartmentControllerTest {
 
         mockMvc.perform(get("/api/departments"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].name").value("Engineering"))
-                .andExpect(jsonPath("$[0].employees[0].email").value("wangqi@example.com"));
+                .andExpect(jsonPath("$.data[0].name").value("Engineering"))
+                .andExpect(jsonPath("$.data[0].employees[0].email").value("wangqi@example.com"));
     }
 
     @Test
@@ -67,7 +67,8 @@ class DepartmentControllerTest {
                         .content(objectMapper.writeValueAsString(new DepartmentRequestPayload("Engineering"))))
                 .andExpect(status().isCreated())
                 .andExpect(header().string("Location", "http://localhost/api/departments/10"))
-                .andExpect(jsonPath("$.id").value(10));
+                .andExpect(jsonPath("$.code").value(201))
+                .andExpect(jsonPath("$.data.id").value(10));
     }
 
     @Test

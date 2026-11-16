@@ -18,6 +18,7 @@ import java.util.Map;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -56,7 +57,7 @@ class EmployeeControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(invalidBody))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.code").value(400))
                 .andExpect(jsonPath("$.path").value("/api/employees"))
                 .andExpect(jsonPath("$.fieldErrors.firstName").exists())
                 .andExpect(jsonPath("$.fieldErrors.email").exists());
@@ -69,8 +70,43 @@ class EmployeeControllerTest {
 
         mockMvc.perform(get("/api/employees/99"))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.status").value(404))
-                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andExpect(jsonPath("$.code").value(404))
                 .andExpect(jsonPath("$.message").value("Employee not found with id: 99"));
+    }
+
+    @Test
+    @DisplayName("PUT /api/employees/{id} returns 404 when the employee does not exist")
+    void shouldReturn404WhenUpdatingUnknownEmployee() throws Exception {
+        String body = objectMapper.writeValueAsString(Map.of(
+                "firstName", "Qi",
+                "lastName", "Wang",
+                "email", "qi.wang@example.com",
+                "salary", 5000));
+
+        when(employeeService.updateEmployee(org.mockito.ArgumentMatchers.eq(99L), org.mockito.ArgumentMatchers.any()))
+                .thenThrow(new EmployeeNotFoundException(99L));
+
+        mockMvc.perform(put("/api/employees/99")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(404))
+                .andExpect(jsonPath("$.path").value("/api/employees/99"));
+    }
+
+    @Test
+    @DisplayName("PUT /api/employees/{id} validates the body before reaching the service")
+    void shouldReturn400WhenUpdateBodyIsInvalid() throws Exception {
+        String body = objectMapper.writeValueAsString(Map.of(
+                "firstName", "",
+                "lastName", "",
+                "email", "not-an-email"));
+
+        mockMvc.perform(put("/api/employees/1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(400))
+                .andExpect(jsonPath("$.fieldErrors.email").exists());
     }
 }

@@ -64,15 +64,25 @@ problem**.
   `listener.simple.observation-enabled`), so the gateway, the API and the
   consumer log the **same** `traceId`. Spans are exported to Zipkin at `:9411`.
 - **Global Exception Handling** — a single `@RestControllerAdvice` translates
-  domain exceptions into meaningful HTTP responses. Clients never receive a raw
-  stack trace or an accidental `500` for a predictable error.
+  domain exceptions into meaningful HTTP responses, and maps malformed JSON,
+  type mismatches, missing parameters, unsupported methods and media types to
+  the right `4xx`. An unexpected error is logged with its stack trace and
+  returned as a generic `500` that carries only the correlation id, never
+  internal details.
+- **Uniform Response Envelope** — every response, success or failure, is a
+  `Result<T>`: `{code, message, data, path, requestId, fieldErrors, timestamp}`.
+  One parser and one Axios interceptor cover the whole API, while `code` mirrors
+  the real HTTP status so caches, proxies and dashboards keep working.
 - **Strict Request Validation** — DTOs are annotated with `@NotBlank`, `@Email`,
-  `@Min`, `@Size` and validated with `@Valid`. When validation fails, the API
-  returns a structured `400 Bad Request` that lists **exactly which fields are
-  wrong and why**.
+  `@DecimalMin`, `@Size` and validated with `@Valid`; entities carry the same
+  constraints as a last line of defence. When validation fails, the API returns
+  a structured `400 Bad Request` that lists **exactly which fields are wrong and
+  why**. A cross-field rule rejects a salary range whose lower bound exceeds its
+  upper bound.
 - **Standard HTTP Status Codes** — `201 Created` (with a `Location` header) on
-  creation, `200 OK` on a successful read, `204 No Content` on deletion,
+  creation, `200 OK` on reads, `200 OK` with an empty envelope on deletion,
   `404 Not Found` for unknown ids and `409 Conflict` for duplicate emails.
+  The envelope never replaces the status code, it repeats it in `code`.
 - **Automated Tests** — the service layer is unit-tested with Mockito, and the
   web layer is tested with `@WebMvcTest` + `MockMvc`.
 - **JPA Performance (N+1 elimination)** — listing departments together with
@@ -259,32 +269,36 @@ GET /api/employees?jobTitle=engineer&minSalary=5000&page=0&size=20&sort=salary,d
 
 ```json
 {
-  "content": [
-    {
-      "id": 1,
-      "firstName": "Alice",
-      "lastName": "Chen",
-      "email": "alice@example.com",
-      "jobTitle": "Senior Backend Engineer",
-      "salary": 9000.00,
-      "createdAt": "2024-01-01T10:15:30Z"
-    }
-  ],
-  "page": 0,
-  "size": 20,
-  "totalElements": 1,
-  "totalPages": 1,
-  "first": true,
-  "last": true
+  "code": 200,
+  "message": "OK",
+  "data": {
+    "content": [
+      {
+        "id": 1,
+        "firstName": "Alice",
+        "lastName": "Chen",
+        "email": "alice@example.com",
+        "jobTitle": "Senior Backend Engineer",
+        "salary": 9000.00,
+        "createdAt": "2024-01-01T10:15:30Z"
+      }
+    ],
+    "page": 0,
+    "size": 20,
+    "totalElements": 1,
+    "totalPages": 1,
+    "first": true,
+    "last": true
+  },
+  "requestId": "3b0f9c4e-8f7a-4c2b-9a1e-1f0b2c3d4e5f",
+  "timestamp": "2024-01-01T10:15:30.123Z"
 }
 ```
 
 Implementation notes:
 
-- Filters are compiled into a single SQL statement with `Specification`
-  (`EmployeeSpecifications`). Nothing is loaded and filtered in memory, and an
-  absent filter contributes no predicate at all.
-- The response is a **stable `PageResponse` envelope**, not Spring's internal
+- Every response is wrapped in `Result<T>`. The page itself is still a
+  **stable `PageResponse` envelope** under `data`, never Spring's internal
   `Page` serialisation, which changes shape between versions and is not a
   contract you should hand to a client.
 - `size` is capped at 100; without a cap one request can ask the server to
@@ -491,7 +505,7 @@ Implementation notes:
   expired yet.
 - Malformed or tampered tokens are treated as unauthenticated and return `401`,
   never a `500`.
-- `401` and `403` reuse the shared `ErrorResponse` contract, so security errors
+- `401` and `403` reuse the shared `Result<T>` envelope, so security errors
   look exactly like validation and domain errors.
 - The signing key comes from `JWT_SECRET`; the value in `application.yml` is a
   development default only. The same value must be given to the employee API and
@@ -522,7 +536,7 @@ retrying safe.
 | `4xx`                                | **Not retried** — the request itself is wrong; fail fast with `502` |
 | `5xx`                                | Retried with exponential backoff                        |
 | Connection refused / read timeout    | Retried with exponential backoff                        |
-| Retries exhausted                    | `502 Bad Gateway` with a single `ErrorResponse` body    |
+| Retries exhausted                    | `502 Bad Gateway` with a single `Result` body           |
 
 Each attempt is bounded by a connect and read timeout (2s by default), so a
 hanging upstream cannot pin a Tomcat worker indefinitely. Backoff starts at
@@ -584,7 +598,7 @@ gateway's logs line up with ours; otherwise a UUID is generated. The id is:
 
 - echoed back in the `X-Request-Id` response header,
 - placed in the SLF4J MDC as `requestId`, which the log pattern renders,
-- included as `requestId` in every `ErrorResponse`,
+- included as `requestId` in every response body,
 - copied into async worker threads (see the next section),
 - removed in a `finally` block so a pooled thread never leaks another request's id.
 
@@ -726,7 +740,7 @@ port of the owning service is shown in the last column.
 | `GET`    | `/api/employees`      | employee-api     | query params (`firstName`, `lastName`, `email`, `jobTitle`, `departmentId`, `minSalary`, `maxSalary`, `page`, `size`, `sort`) | `200 OK` | `400 Bad Request`, `401 Unauthorized` |
 | `POST`   | `/api/employees`      | employee-api     | JSON (`firstName`, `lastName`, `email`, `jobTitle`, `salary`, optional `departmentId`); optional `Idempotency-Key` header | `201 Created`  | `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, `404 Not Found`, `409 Conflict` |
 | `POST`   | `/api/employees/{id}/sync` | employee-api | — (pushes the employee to the external HR system)        | `200 OK`            | `401 Unauthorized`, `404 Not Found`, `502 Bad Gateway` |
-| `DELETE` | `/api/employees/{id}` | employee-api     | —                                                        | `204 No Content`    | `401 Unauthorized`, `403 Forbidden`, `404 Not Found` |
+| `DELETE` | `/api/employees/{id}` | employee-api     | —                                                        | `200 OK` (empty envelope) | `401 Unauthorized`, `403 Forbidden`, `404 Not Found` |
 | `POST`   | `/api/departments`    | employee-api     | JSON (`name`)                                            | `201 Created`       | `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, `409 Conflict` |
 | `GET`    | `/api/departments`    | employee-api     | —                                                        | `200 OK`            | `401 Unauthorized`           |
 | `GET`    | `/api/onboarding/tasks` | onboarding-service | —                                                     | `200 OK` (newest first) | `401 Unauthorized`       |
@@ -741,6 +755,37 @@ Interactive documentation is served at `http://localhost:8000/swagger-ui.html`
 Use the **Authorize** button with the token from `POST /api/auth/login` to call
 protected endpoints directly from the browser.
 
+### Response envelope
+
+Every response — success or failure, from a controller or from the security
+filter chain — is a `Result<T>`:
+
+```json
+{
+  "code": 200,
+  "message": "OK",
+  "data": { },
+  "path": "/api/employees",
+  "requestId": "3b0f9c4e-8f7a-4c2b-9a1e-1f0b2c3d4e5f",
+  "fieldErrors": { },
+  "timestamp": "2024-01-01T10:15:30.123Z"
+}
+```
+
+| Field | Present on | Meaning |
+| ----- | ---------- | ------- |
+| `code` | always | Mirrors the HTTP status; the status line stays authoritative |
+| `message` | always | Safe to display to an end user |
+| `data` | success with a payload | The response body itself |
+| `path` | errors | Request URI that failed |
+| `requestId` | when the filter ran | Same value as the `X-Request-Id` header |
+| `fieldErrors` | `400` only | Field name → validation message |
+| `timestamp` | always | Server time, ISO-8601 UTC |
+
+Empty fields are omitted, so a success body stays small. Deletion returns
+`200 OK` with `data` absent instead of `204 No Content`: `204` is body-less by
+definition, and the frontend should not need a second code path for it.
+
 ### Login — request and response
 
 ```json
@@ -752,10 +797,16 @@ protected endpoints directly from the browser.
 
 ```json
 {
-  "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
-  "tokenType": "Bearer",
-  "expiresInSeconds": 3600,
-  "username": "admin"
+  "code": 200,
+  "message": "Login successful.",
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
+    "tokenType": "Bearer",
+    "expiresInSeconds": 3600,
+    "username": "admin"
+  },
+  "requestId": "3b0f9c4e-8f7a-4c2b-9a1e-1f0b2c3d4e5f",
+  "timestamp": "2024-01-01T10:15:30.123Z"
 }
 ```
 
@@ -775,31 +826,39 @@ protected endpoints directly from the browser.
 
 ```json
 {
-  "id": 1,
-  "firstName": "Qi",
-  "lastName": "Wang",
-  "email": "wangqi@example.com",
-  "jobTitle": "Backend Engineer",
-  "salary": 5000.00,
-  "createdAt": "2024-01-01T10:15:30Z"
+  "code": 201,
+  "message": "Created",
+  "data": {
+    "id": 1,
+    "firstName": "Qi",
+    "lastName": "Wang",
+    "email": "wangqi@example.com",
+    "jobTitle": "Backend Engineer",
+    "salary": 5000.00,
+    "createdAt": "2024-01-01T10:15:30Z"
+  },
+  "requestId": "3b0f9c4e-8f7a-4c2b-9a1e-1f0b2c3d4e5f",
+  "timestamp": "2024-01-01T10:15:30.123Z"
 }
 ```
+
+The `Location` header points at `/api/employees/1`.
 
 ### Validation failure response (`400 Bad Request`)
 
 ```json
 {
-  "timestamp": "2024-01-01T10:15:30Z",
-  "status": 400,
-  "error": "Bad Request",
+  "code": 400,
   "message": "Validation failed for one or more fields.",
   "path": "/api/employees",
+  "requestId": "3b0f9c4e-8f7a-4c2b-9a1e-1f0b2c3d4e5f",
   "fieldErrors": {
     "email": "Email must be a well-formed email address",
     "firstName": "First name is required",
     "lastName": "Last name is required",
     "salary": "Salary is required"
-  }
+  },
+  "timestamp": "2024-01-01T10:15:30.123Z"
 }
 ```
 
@@ -807,13 +866,25 @@ protected endpoints directly from the browser.
 
 ```json
 {
-  "timestamp": "2024-01-01T10:15:30Z",
-  "status": 404,
-  "error": "Not Found",
+  "code": 404,
   "message": "Employee not found with id: 99",
-  "path": "/api/employees/99"
+  "path": "/api/employees/99",
+  "requestId": "3b0f9c4e-8f7a-4c2b-9a1e-1f0b2c3d4e5f",
+  "timestamp": "2024-01-01T10:15:30.123Z"
 }
 ```
+
+### Other mapped failures
+
+| Situation | Status | Envelope |
+| --------- | ------ | -------- |
+| Body is not valid JSON, or a value has the wrong type | `400` | `message` explains the schema violation |
+| Path variable has the wrong type (`/api/employees/abc`) | `400` | `message` names the parameter |
+| Required query parameter missing | `400` | `message` names the parameter |
+| `size` above the cap, or `minSalary > maxSalary` | `400` | `fieldErrors` |
+| Unsupported HTTP method on an existing path | `405` | `message` names the method |
+| Missing or non-JSON `Content-Type` | `415` | `message` names the media type |
+| Anything unanticipated | `500` | Generic message plus `requestId`; the stack trace stays in the log |
 
 ---
 
@@ -897,7 +968,7 @@ mvn -pl api-gateway test                   # route definitions only
 # 1. Log in as the seeded admin through the gateway -> 200 OK, capture the token
 TOKEN=$(curl -s -X POST http://localhost:8000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin123"}' | jq -r .accessToken)
+  -d '{"username":"admin","password":"admin123"}' | jq -r .data.accessToken)
 
 # 2. Unauthenticated request -> 401 Unauthorized (JSON), produced downstream
 curl http://localhost:8000/api/departments

@@ -29,5 +29,14 @@ public interface EmployeeService {
      */
     EmployeeCreationResult createEmployee(EmployeeRequest request, String idempotencyKey);
 
+    /**
+     * Replaces the mutable fields of an existing employee.
+     *
+     * @throws com.wangqi.employee.exception.EmployeeNotFoundException  when the id is unknown
+     * @throws com.wangqi.employee.exception.DuplicateEmailException   when another employee already uses the email
+     * @throws com.wangqi.employee.exception.DepartmentNotFoundException when the department id does not exist
+     */
+    EmployeeResponse updateEmployee(Long id, EmployeeRequest request);
+
     void deleteEmployee(Long id);
 }

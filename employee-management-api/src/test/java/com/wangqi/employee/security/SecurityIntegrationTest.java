@@ -21,6 +21,7 @@ import java.util.UUID;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -70,8 +71,8 @@ class SecurityIntegrationTest {
     void shouldReturn401WithoutToken() throws Exception {
         mockMvc.perform(get("/api/departments"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.status").value(401))
-                .andExpect(jsonPath("$.error").value("Unauthorized"))
+                .andExpect(jsonPath("$.code").value(401))
+                .andExpect(jsonPath("$.message").value("Authentication required: send a valid Bearer token."))
                 .andExpect(jsonPath("$.path").value("/api/departments"));
     }
 
@@ -81,7 +82,7 @@ class SecurityIntegrationTest {
         mockMvc.perform(get("/api/departments")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer not-a-real-jwt"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.status").value(401));
+                .andExpect(jsonPath("$.code").value(401));
     }
 
     @Test
@@ -115,7 +116,7 @@ class SecurityIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(validEmployee())))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.status").value(403));
+                .andExpect(jsonPath("$.code").value(403));
     }
 
     @Test
@@ -129,7 +130,49 @@ class SecurityIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(payload)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.email").value(payload.email()));
+                .andExpect(jsonPath("$.data.email").value(payload.email()));
+    }
+
+    @Test
+    @DisplayName("an admin can update an employee through PUT")
+    void shouldAllowAdminToUpdateEmployee() throws Exception {
+        String token = login("admin", "admin123");
+        EmployeePayload payload = validEmployee();
+
+        String createdBody = mockMvc.perform(post("/api/employees")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(payload)))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        long id = objectMapper.readTree(createdBody).at("/data/id").asLong();
+
+        EmployeePayload updated = new EmployeePayload(
+                "Updated", "Person", payload.email(), "Staff Engineer", 9000);
+
+        mockMvc.perform(put("/api/employees/" + id)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(updated)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.id").value(id))
+                .andExpect(jsonPath("$.data.firstName").value("Updated"))
+                .andExpect(jsonPath("$.data.jobTitle").value("Staff Engineer"));
+    }
+
+    @Test
+    @DisplayName("a regular user is forbidden from updating employees")
+    void shouldReturn403WhenViewerUpdatesEmployee() throws Exception {
+        String token = login("viewer", "viewer123");
+
+        mockMvc.perform(put("/api/employees/1")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(validEmployee())))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(403));
     }
 
     private String login(String username, String password) throws Exception {
@@ -142,7 +185,7 @@ class SecurityIntegrationTest {
                 .getContentAsString();
 
         JsonNode body = objectMapper.readTree(response);
-        return body.get("accessToken").asText();
+        return body.get("data").get("accessToken").asText();
     }
 
     private EmployeePayload validEmployee() {
