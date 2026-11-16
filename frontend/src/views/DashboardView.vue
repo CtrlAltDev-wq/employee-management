@@ -16,7 +16,7 @@ let chart: echarts.ECharts | null = null
 
 const distribution = computed(() =>
   departments.value
-    .map((department) => ({ name: department.name, value: department.employees.length }))
+    .map((department) => ({ name: department.name, value: department.employees?.length ?? 0 }))
     .sort((left, right) => right.value - left.value)
 )
 
@@ -111,8 +111,10 @@ async function load(): Promise<void> {
       searchEmployees({ page: 0, size: 1, sort: 'id,asc' }),
       listDepartments()
     ])
-    totalEmployees.value = page.totalElements
-    departments.value = departmentList
+    totalEmployees.value = page?.totalElements ?? 0
+    // Guard the shape: a backend that answers with a bare array (or an empty
+    // body) must render an empty dashboard instead of crashing the view.
+    departments.value = Array.isArray(departmentList) ? departmentList : []
     await nextTick()
     renderChart()
   } catch {

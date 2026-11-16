@@ -44,8 +44,8 @@ async function loadEmployees(): Promise<void> {
       size: pagination.size,
       sort: sorting.sort
     })
-    employees.value = result.content
-    total.value = result.totalElements
+    employees.value = result?.content ?? []
+    total.value = result?.totalElements ?? 0
   } catch {
     // The interceptor already explained the failure.
   } finally {
@@ -55,7 +55,8 @@ async function loadEmployees(): Promise<void> {
 
 async function loadDepartments(): Promise<void> {
   try {
-    departments.value = await listDepartments()
+    const result = await listDepartments()
+    departments.value = Array.isArray(result) ? result : []
   } catch {
     departments.value = []
   }
