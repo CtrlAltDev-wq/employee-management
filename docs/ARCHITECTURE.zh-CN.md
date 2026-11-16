@@ -893,7 +893,7 @@ docker compose up --build -d
 
 | 服务 | 端口 | 作用 |
 | ---- | ---- | ---- |
-| `web` | 3000 | Nginx 托管构建后的 SPA，并把 `/api` 转发给网关 |
+| `web` | 80 | Nginx 托管构建后的 SPA，并把 `/api` 转发给网关 |
 | `api-gateway` | 8000 | 唯一公开的 API 入口 |
 | `employee-api` | 8080 | 员工、部门、认证（数据落在 MySQL） |
 | `onboarding-service` | 8081 | 消费 `employee.created` |
@@ -902,7 +902,7 @@ docker compose up --build -d
 | `rabbitmq` | 5672 / 15672 | 事件 broker 与管理界面 |
 | `zipkin` | 9411 | 链路追踪收集与界面 |
 
-打开 <http://localhost:3000>，用 `admin` / `admin123` 登录。
+打开 <http://localhost>，用 `admin` / `admin123` 登录。
 
 不改文件也能覆盖默认值：
 
