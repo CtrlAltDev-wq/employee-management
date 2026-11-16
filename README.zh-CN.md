@@ -38,7 +38,7 @@
 | API 文档         | springdoc-openapi 2.6（Swagger UI）                  |
 | 可观测性         | Spring Boot Actuator、Micrometer、Prometheus         |
 | 异步             | Spring `@Async` + 有界 `ThreadPoolTaskExecutor`      |
-| 打包             | Docker（多阶段构建）、Docker Compose（6 个服务）    |
+| 打包             | Docker（多阶段构建）、Docker Compose（8 个服务）    |
 | 样板代码         | Lombok                                               |
 | 测试             | JUnit 5、Mockito、MockMvc、AssertJ                   |
 | 构建             | Maven 3.9（根 reactor）                              |
@@ -106,7 +106,8 @@
   core/max/queue 限制、CallerRuns 拒绝策略和 MDC 传播，
   因此后台任务既不会饿死请求，也不会丢失 trace 上下文。
 - **容器化** —— 多阶段 Dockerfile 使用完整 JDK 构建，交付带健康检查的
-  非 root JRE 镜像；`docker compose up` 会同时启动网关、两个服务、Redis、RabbitMQ 和 Zipkin。
+  非 root JRE 镜像；`docker compose up` 会同时启动网关、两个服务、MySQL、Redis、
+  RabbitMQ 和 Zipkin，外加一个 Nginx 容器：它托管构建好的 SPA，并把 `/api` 转发给网关。
 
 > **本项目证明了什么：** 我能在 SQL 层面找到性能问题，并用查询计数断言证明修复；
 > 能添加无状态 JWT 认证并正确处理 `401`/`403` 语义；
@@ -882,10 +883,38 @@ docker run -d --name employee-mysql -p 3306:3306 \
   -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_DATABASE=employee_management mysql:8.0
 ```
 
-或运行打包好的容器：
+### 用容器跑起全部服务
 
 ```bash
-docker compose up --build
+docker compose up --build -d
+```
+
+一条命令构建并启动 8 个容器，只对外暴露两个端口：
+
+| 服务 | 端口 | 作用 |
+| ---- | ---- | ---- |
+| `web` | 3000 | Nginx 托管构建后的 SPA，并把 `/api` 转发给网关 |
+| `api-gateway` | 8000 | 唯一公开的 API 入口 |
+| `employee-api` | 8080 | 员工、部门、认证（数据落在 MySQL） |
+| `onboarding-service` | 8081 | 消费 `employee.created` |
+| `mysql` | 3306 | 员工 API 的持久化存储 |
+| `redis` | 6379 | 读缓存 |
+| `rabbitmq` | 5672 / 15672 | 事件 broker 与管理界面 |
+| `zipkin` | 9411 | 链路追踪收集与界面 |
+
+打开 <http://localhost:3000>，用 `admin` / `admin123` 登录。
+
+不改文件也能覆盖默认值：
+
+```bash
+JWT_SECRET=... MYSQL_ROOT_PASSWORD=... docker compose up -d
+```
+
+只改了某个镜像时，单独重建即可：
+
+```bash
+docker compose up -d --build web          # 前端
+docker compose up -d --build employee-api # 后端
 ```
 
 ### 运行测试

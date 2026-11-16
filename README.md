@@ -39,7 +39,7 @@ problem**.
 | API Docs         | springdoc-openapi 2.6 (Swagger UI)                  |
 | Observability    | Spring Boot Actuator, Micrometer, Prometheus        |
 | Async            | Spring `@Async` with a bounded `ThreadPoolTaskExecutor` |
-| Packaging        | Docker (multi-stage builds), Docker Compose (6 services) |
+| Packaging        | Docker (multi-stage builds), Docker Compose (8 services) |
 | Boilerplate      | Lombok                                              |
 | Testing          | JUnit 5, Mockito, MockMvc, AssertJ                  |
 | Build            | Maven 3.9 (root reactor)                            |
@@ -128,7 +128,8 @@ problem**.
   trace context.
 - **Containerised** — multi-stage Dockerfiles build with the full JDK and ship
   non-root JRE images with health checks; `docker compose up` starts the gateway,
-  both services, Redis, RabbitMQ and Zipkin together.
+  both services, MySQL, Redis, RabbitMQ and Zipkin together, plus an Nginx
+  container that serves the built SPA and proxies `/api` to the gateway.
 
 > **What this project demonstrates:** I can find a performance problem at the
 > SQL level and prove the fix with query-count assertions, add stateless JWT
@@ -969,10 +970,38 @@ docker run -d --name employee-mysql -p 3306:3306 \
   -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_DATABASE=employee_management mysql:8.0
 ```
 
-Or run the packaged containers:
+### Run everything in containers
 
 ```bash
-docker compose up --build
+docker compose up --build -d
+```
+
+One command builds and starts eight containers behind two published ports:
+
+| Service | Port | Purpose |
+| ------- | ---- | ------- |
+| `web` | 3000 | Nginx serving the built SPA and proxying `/api` to the gateway |
+| `api-gateway` | 8000 | public API entry point |
+| `employee-api` | 8080 | employees, departments, auth (now backed by MySQL) |
+| `onboarding-service` | 8081 | consumes `employee.created` |
+| `mysql` | 3306 | persistent storage for the employee API |
+| `redis` | 6379 | read cache |
+| `rabbitmq` | 5672 / 15672 | event broker and its management UI |
+| `zipkin` | 9411 | trace collector and UI |
+
+Open <http://localhost:3000> and sign in with `admin` / `admin123`.
+
+Override any default without touching the file:
+
+```bash
+JWT_SECRET=... MYSQL_ROOT_PASSWORD=... docker compose up -d
+```
+
+After changing a single image, rebuild just that one:
+
+```bash
+docker compose up -d --build web          # frontend
+docker compose up -d --build employee-api # backend
 ```
 
 ### Run the tests
