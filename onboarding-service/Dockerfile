@@ -1,7 +1,6 @@
-# syntax=docker/dockerfile:1
-
 # Build context is the repository root (see docker-compose.yml): the service
 # depends on the shared contracts module, which lives in a sibling directory.
+# No BuildKit-only syntax is used, so the build needs no external frontend image.
 
 # ---- Build stage: compile and package with the full JDK ----
 FROM maven:3.9-eclipse-temurin-17 AS build
