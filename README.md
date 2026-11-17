@@ -124,21 +124,22 @@ Environment overrides: `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_DATABASE`, `MYSQL_USER
 
 ### Hybrid: containers for middleware, IDE for the API
 
-Middleware in containers, business code in your debugger. Start the stack, stop the API to free port 8080, then tell the gateway to forward to your host:
+Middleware in containers, business code in your debugger. Leave the API container out of the stack so it cannot fight your IDE for port 8080, and point the gateway at the host:
 
 ```bash
-docker compose up -d
-docker compose stop employee-api
+docker compose up -d --no-deps mysql redis rabbitmq zipkin
 
 # in the IDE: SPRING_PROFILES_ACTIVE=mysql and
 # MYSQL_HOST=127.0.0.1, REDIS_HOST=127.0.0.1, RABBITMQ_HOST=127.0.0.1 (password "wangqi")
 EMPLOYEE_API_URI=http://host.docker.internal:8080 \
-  docker compose up -d --no-deps --force-recreate api-gateway
+  docker compose up -d --no-deps api-gateway web onboarding-service
 ```
 
-`http://localhost` keeps working and its `/api` calls now reach your IDE. MySQL, Redis, RabbitMQ and Zipkin publish their ports, so a GUI client connects to `127.0.0.1:3306`, `:6379` and `:15672` while the API runs outside Docker.
+`--no-deps` and the explicit service list are the point: a plain `docker compose up -d` also starts `employee-api`, whose published port then collides with your IDE. `http://localhost` keeps working and its `/api` calls reach the debugging session.
 
-`ONBOARDING_SERVICE_URI` works the same way for the consumer. Drop the variable and run `docker compose up -d api-gateway` to switch back to the containerised API.
+MySQL, Redis, RabbitMQ and Zipkin publish their ports, so a GUI client connects to `127.0.0.1:3306`, `:6379` and `:15672` while the API runs outside Docker. `ONBOARDING_SERVICE_URI` works the same way for the consumer.
+
+Back to everything in containers: stop the IDE, then `docker compose up -d` — gateway defaults to the service name again.
 
 ## Tests
 
