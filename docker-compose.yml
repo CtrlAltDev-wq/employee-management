@@ -156,10 +156,15 @@ services:
       zipkin:
         condition: service_started
     environment:
-      EMPLOYEE_API_URI: http://employee-api:8080
-      ONBOARDING_SERVICE_URI: http://onboarding-service:8081
+      # Overridable so the gateway can also reach a service running in your IDE:
+      # EMPLOYEE_API_URI=http://host.docker.internal:8080
+      EMPLOYEE_API_URI: ${EMPLOYEE_API_URI:-http://employee-api:8080}
+      ONBOARDING_SERVICE_URI: ${ONBOARDING_SERVICE_URI:-http://onboarding-service:8081}
       ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
       JAVA_OPTS: "-XX:MaxRAMPercentage=75"
+    # Resolves to the host on Linux too; Docker Desktop provides it already.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8000/actuator/health | grep -q '\"status\":\"UP\"'"]
       interval: 30s

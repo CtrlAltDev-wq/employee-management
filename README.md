@@ -122,6 +122,24 @@ cd employee-management-web && npm install && npm run dev
 
 Environment overrides: `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_DATABASE`, `MYSQL_USERNAME`, `MYSQL_PASSWORD`, `JWT_SECRET`, `CACHE_PROVIDER` (`redis` / `simple`), `MESSAGING_ENABLED` (`true` / `false`).
 
+### Hybrid: containers for middleware, IDE for the API
+
+Middleware in containers, business code in your debugger. Start the stack, stop the API to free port 8080, then tell the gateway to forward to your host:
+
+```bash
+docker compose up -d
+docker compose stop employee-api
+
+# in the IDE: SPRING_PROFILES_ACTIVE=mysql and
+# MYSQL_HOST=127.0.0.1, REDIS_HOST=127.0.0.1, RABBITMQ_HOST=127.0.0.1 (password "wangqi")
+EMPLOYEE_API_URI=http://host.docker.internal:8080 \
+  docker compose up -d --no-deps --force-recreate api-gateway
+```
+
+`http://localhost` keeps working and its `/api` calls now reach your IDE. MySQL, Redis, RabbitMQ and Zipkin publish their ports, so a GUI client connects to `127.0.0.1:3306`, `:6379` and `:15672` while the API runs outside Docker.
+
+`ONBOARDING_SERVICE_URI` works the same way for the consumer. Drop the variable and run `docker compose up -d api-gateway` to switch back to the containerised API.
+
 ## Tests
 
 ```bash
