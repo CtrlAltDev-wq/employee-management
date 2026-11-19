@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend - Maven and JUnit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      # The suite runs against H2 with the in-memory cache and the in-process
+      # event relay, so no Redis, RabbitMQ or Docker service is needed here.
+      - name: Run the test suite
+        run: mvn -B -ntp verify
+
+  frontend:
+    name: Frontend - TypeScript and Vite
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: employee-management-web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: employee-management-web/package-lock.json
+
+      - run: npm ci
+
+      # "build" is "vue-tsc --noEmit && vite build": type errors fail the job.
+      - run: npm run build
+
+  docker:
+    name: Docker - images and compose
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Validate the compose file
+        run: docker compose config -q
+
+      - name: Build the API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: employee-management-api/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build the web image
+        uses: docker/build-push-action@v6
+        with:
+          context: employee-management-web
+          file: employee-management-web/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

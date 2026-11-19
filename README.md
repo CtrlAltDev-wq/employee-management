@@ -2,6 +2,11 @@
 
 **Production-Ready Enterprise Employee Management System** — a Spring Boot 3 microservice backend and a Vue 3 admin console, containerised so the whole stack starts with one command.
 
+[![CI](https://github.com/CtrlAltDev-wq/employee-management/actions/workflows/ci.yml/badge.svg)](https://github.com/CtrlAltDev-wq/employee-management/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-82%20passing-brightgreen)](https://github.com/CtrlAltDev-wq/employee-management/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Docker](https://img.shields.io/badge/docker%20compose-v2-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
+
 ![Java](https://img.shields.io/badge/Java-17-orange)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3.5-6DB33F?logo=springboot&logoColor=white)
 ![Spring Security](https://img.shields.io/badge/Security-JWT-6DB33F?logo=springsecurity&logoColor=white)
@@ -10,8 +15,6 @@
 ![MySQL](https://img.shields.io/badge/MySQL-8-4479A1?logo=mysql&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)
 ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-3-FF6600?logo=rabbitmq&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-82%20passing-brightgreen)
 
 ![Dashboard](docs/screenshots/02-dashboard.png)
 
@@ -168,3 +171,7 @@ Each engineering claim is backed by a test that fails if the behaviour regresses
 Deeper notes on the N+1 fix, cache invalidation, idempotency, tracing and the service split live in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 Author: **wangqi**
+
+## License
+
+MIT — see [LICENSE](LICENSE).
